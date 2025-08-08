@@ -3,7 +3,7 @@
 This project builds a machine learning model to predict the relevance of a product to a user's search query on HomeDepot.com. It is based on the Kaggle competition: [Home Depot Product Search Relevance](https://www.kaggle.com/c/home-depot-product-search-relevance/).
 
 The dataset is not included in this repository due to file size limitations.  
-You can download it from the [Kaggle competition page] and place the files in the `home-depot-product-search-relevance/` directory.
+You can download it from the Kaggle competition page and place the files in the `home-depot-product-search-relevance/` directory.
 
 ## Project Structure
 
