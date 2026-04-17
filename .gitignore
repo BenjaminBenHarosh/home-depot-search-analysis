@@ -30,3 +30,9 @@ htmlcov/
 
 # OS/editor noise
 .DS_Store
+
+# Local raw datasets (keep out of git)
+home-depot-product-search-relevance/
+
+# Generated run artifacts
+outputs/
