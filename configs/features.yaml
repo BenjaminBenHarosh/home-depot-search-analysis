@@ -1,0 +1,18 @@
+feature_sets:
+  baseline:
+    - query_length
+    - common_words
+  core_semantic:
+    - tfidf_similarity
+    - initial_term_match
+    - jaccard
+    - fuzzy
+    - bigram_overlap
+  domain_boosted:
+    - tfidf_similarity
+    - initial_term_match
+    - common_words
+    - color_match
+    - unit_match
+    - numeric_unit_consistency
+    - edit_distance

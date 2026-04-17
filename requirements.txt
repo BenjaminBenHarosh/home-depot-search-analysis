@@ -40,3 +40,8 @@ tqdm==4.67.1
 traitlets==5.14.3
 tzdata==2025.2
 wcwidth==0.2.13
+PyYAML==6.0.2
+pytest==8.3.5
+pytest-cov==6.0.0
+ruff==0.9.10
+mypy==1.15.0

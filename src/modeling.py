@@ -1,5 +1,7 @@
-"""Model training, evaluation, and plotting utilities."""
+"""Model training, evaluation, plotting, and experiment utilities."""
 
+import os
+import random
 import time
 
 import matplotlib.pyplot as plt
@@ -8,7 +10,7 @@ import pandas as pd
 from IPython.display import display
 from scipy.stats import randint, ttest_rel, uniform
 from sklearn.base import clone
-from sklearn.ensemble import BaggingRegressor, GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import BaggingRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import RandomizedSearchCV, cross_val_score, train_test_split
 from sklearn.neighbors import KNeighborsRegressor
@@ -33,7 +35,7 @@ def evaluate_model(model, X_train, y_train, name="Unnamed Model"):
     return name, rmse, train_time
 
 
-def compare_models(df_all, df_attr, feature_set, num_train, stem=True):
+def compare_models(df_all, df_attr, feature_set, num_train, stem=True, include_hist_gradient=False):
     print("\n=== Model Comparison ===")
     df_features = build_feature_set(df_all.copy(), df_attr, feature_set, stem=stem)
     df_train = df_features.iloc[:num_train]
@@ -46,6 +48,8 @@ def compare_models(df_all, df_attr, feature_set, num_train, stem=True):
         ("Support Vector Regressor", make_pipeline(StandardScaler(), SVR(kernel="rbf", C=1.0, epsilon=0.2))),
         ("KNN", KNeighborsRegressor(n_neighbors=5)),
     ]
+    if include_hist_gradient:
+        models.append(("HistGradientBoosting", HistGradientBoostingRegressor(max_depth=6, random_state=0)))
 
     results = []
     for name, model in models:
@@ -59,7 +63,7 @@ def compare_models(df_all, df_attr, feature_set, num_train, stem=True):
     return results_df
 
 
-def run_model_tuning_with_ttest(X, y):
+def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
     rf_param_dist = {
         "n_estimators": randint(50, 200),
         "max_depth": randint(4, 15),
@@ -78,10 +82,10 @@ def run_model_tuning_with_ttest(X, y):
     rf_search = RandomizedSearchCV(
         RandomForestRegressor(random_state=0),
         rf_param_dist,
-        n_iter=10,
+        n_iter=n_iter,
         cv=5,
         scoring="neg_root_mean_squared_error",
-        random_state=42,
+        random_state=random_seed,
         n_jobs=-1,
         verbose=0,
     )
@@ -101,10 +105,10 @@ def run_model_tuning_with_ttest(X, y):
     gb_search = RandomizedSearchCV(
         GradientBoostingRegressor(random_state=0),
         gb_param_dist,
-        n_iter=10,
+        n_iter=n_iter,
         cv=5,
         scoring="neg_root_mean_squared_error",
-        random_state=42,
+        random_state=random_seed,
         n_jobs=-1,
         verbose=0,
     )
@@ -206,6 +210,35 @@ def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model
     return results_df
 
 
+def run_feature_search(
+    raw_data,
+    df_attr,
+    num_train,
+    feature_sets,
+    model_params=None,
+    search_mode="presets",
+    sample_size=25,
+    random_seed=42,
+    append_path=None,
+):
+    """Run feature search with optional random sampling and resumable output."""
+    candidate_sets = list(feature_sets)
+    if search_mode == "random" and len(candidate_sets) > sample_size:
+        rng = random.Random(random_seed)
+        candidate_sets = rng.sample(candidate_sets, sample_size)
+
+    results_df = run_feature_set_evaluation(raw_data, df_attr, num_train, candidate_sets, model_params=model_params)
+    results_df["Search Mode"] = search_mode
+    results_df["Random Seed"] = random_seed
+
+    if append_path and os.path.exists(append_path):
+        existing_df = pd.read_csv(append_path)
+        results_df = pd.concat([existing_df, results_df], ignore_index=True)
+        results_df = results_df.drop_duplicates(subset=["Features", "Stemming", "Search Mode", "Random Seed"], keep="last")
+
+    return results_df.sort_values(by="RMSE (CV)")
+
+
 def evaluate_on_test_set(df_all, df_attr, features, num_train, stem=True, model_params=None):
     df_features = build_feature_set(df_all.copy(), df_attr, features, stem=stem)
     df_train = df_features.iloc[:num_train]
@@ -223,12 +256,12 @@ def evaluate_on_test_set(df_all, df_attr, features, num_train, stem=True, model_
     return pd.DataFrame({"id": df_test["id"].values, "relevance": y_pred})
 
 
-def generate_submission_file(raw_data, df_attr, num_train, best_features, model_params):
+def generate_submission_file(raw_data, df_attr, num_train, best_features, model_params, output_path="submission.csv"):
     print("Generating final test predictions with best feature combination...")
     final_submission = evaluate_on_test_set(raw_data, df_attr, num_train=num_train, features=best_features, stem=True, model_params=model_params)
     final_submission["relevance"] = final_submission["relevance"].clip(1.0, 3.0).round(2)
-    final_submission.to_csv("submission.csv", index=False)
-    print("Saved predictions to submission.csv.")
+    final_submission.to_csv(output_path, index=False)
+    print(f"Saved predictions to {output_path}.")
 
 
 def plot_relevance_histogram(df_train, save_path="relevance_histogram_annotated.png"):
@@ -382,4 +415,16 @@ def run_full_feature_importance(raw_data, df_attr, num_train, best_params):
         top_n=12,
         save_path="feature_importance_barplot.png",
     )
+
+
+def benchmark_new_features(raw_data, df_attr, num_train, model_params):
+    """Benchmark domain-specific new features against the original best set."""
+    baseline_best = ["query_length", "initial_term_match", "jaccard", "common_words", "color_match", "fuzzy", "bigram_overlap"]
+    candidate_sets = [
+        baseline_best,
+        baseline_best + ["edit_distance"],
+        baseline_best + ["numeric_unit_consistency"],
+        baseline_best + ["query_category_match"],
+    ]
+    return run_feature_set_evaluation(raw_data, df_attr, num_train, candidate_sets, model_params=model_params)
 

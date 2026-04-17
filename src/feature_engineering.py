@@ -1,7 +1,15 @@
-"""Feature engineering utilities."""
+"""Feature engineering utilities and registry helpers."""
+
+from __future__ import annotations
+
+from difflib import SequenceMatcher
+from itertools import combinations
+from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pandas as pd
+import yaml
 from fuzzywuzzy import fuzz
 from nltk import ngrams
 from nltk.stem.snowball import SnowballStemmer
@@ -88,6 +96,9 @@ all_features = [
     "jaccard",
     "bigram_overlap",
     "fuzzy",
+    "edit_distance",
+    "numeric_unit_consistency",
+    "query_category_match",
 ]
 
 feature_sets = [
@@ -126,6 +137,13 @@ feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuz
 feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuzzy", "jaccard", "common_words", "query_has_number", "color_match", "material_match", "brand_match", "unit_match"]]
 feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuzzy", "jaccard", "common_words", "query_has_number", "color_match", "material_match", "brand_match", "unit_match", "bigram_overlap"]]
 
+CATEGORY_KEYWORDS = {
+    "paint": {"paint", "primer", "stain"},
+    "power_tools": {"drill", "saw", "sander", "router"},
+    "plumbing": {"faucet", "toilet", "pipe", "valve"},
+    "lighting": {"light", "lamp", "bulb", "fixture"},
+}
+
 
 def str_stemmer(text):
     return " ".join([stemmer.stem(word) for word in text.lower().split()])
@@ -153,6 +171,10 @@ def fuzzy_ratio(str1, str2):
     return fuzz.token_sort_ratio(str1, str2)
 
 
+def edit_distance_ratio(str1, str2):
+    return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
+
+
 def add_query_length(df):
     df["query_length"] = df["search_term"].map(lambda x: len(x.split())).astype(np.int64)
     return df
@@ -173,6 +195,12 @@ def add_bigram_overlap(df):
 def add_fuzzy_ratio(df):
     df["fuzzy_title"] = df.apply(lambda row: fuzzy_ratio(row["search_term"], row["product_title"]), axis=1)
     df["fuzzy_description"] = df.apply(lambda row: fuzzy_ratio(row["search_term"], row["product_description"]), axis=1)
+    return df
+
+
+def add_edit_distance(df):
+    df["edit_distance_title"] = df.apply(lambda row: edit_distance_ratio(row["search_term"], row["product_title"]), axis=1)
+    df["edit_distance_description"] = df.apply(lambda row: edit_distance_ratio(row["search_term"], row["product_description"]), axis=1)
     return df
 
 
@@ -203,6 +231,22 @@ def add_tfidf_similarity(df):
 
 def add_query_has_number(df):
     df["query_has_number"] = df["search_term"].map(lambda x: sum(any(char.isdigit() for char in token) for token in x.split()))
+    return df
+
+
+def add_numeric_unit_consistency(df):
+    def numeric_unit_score(row):
+        query_tokens = row["search_term"].split()
+        text_tokens = (row["product_title"] + " " + row["product_description"]).split()
+        query_nums = {token for token in query_tokens if any(ch.isdigit() for ch in token)}
+        text_nums = {token for token in text_tokens if any(ch.isdigit() for ch in token)}
+        query_units = {token for token in query_tokens if token in units}
+        text_units = {token for token in text_tokens if token in units}
+        num_overlap = len(query_nums.intersection(text_nums))
+        unit_overlap = len(query_units.intersection(text_units))
+        return float(num_overlap + unit_overlap)
+
+    df["numeric_unit_consistency"] = df.apply(numeric_unit_score, axis=1)
     return df
 
 
@@ -251,38 +295,89 @@ def add_color_match(df, df_attr):
     return df
 
 
+def add_query_category_match(df):
+    def category_flag(query):
+        query_text = query.lower()
+        for category_terms in CATEGORY_KEYWORDS.values():
+            if any(term in query_text for term in category_terms):
+                return 1
+        return 0
+
+    df["query_category_match"] = df["search_term"].map(category_flag)
+    return df
+
+
+def _feature_registry() -> dict[str, Callable[[pd.DataFrame, pd.DataFrame], pd.DataFrame]]:
+    return {
+        "query_length": lambda df, _: add_query_length(df),
+        "common_words": lambda df, _: add_common_word_features(df),
+        "brand_match": add_brand_match,
+        "tfidf_similarity": lambda df, _: add_tfidf_similarity(df),
+        "query_has_number": lambda df, _: add_query_has_number(df),
+        "unit_match": lambda df, _: add_unit_match(df),
+        "initial_term_match": lambda df, _: add_initial_term_match(df),
+        "material_match": add_material_match,
+        "color_match": add_color_match,
+        "jaccard": lambda df, _: add_jaccard_similarity(df),
+        "bigram_overlap": lambda df, _: add_bigram_overlap(df),
+        "fuzzy": lambda df, _: add_fuzzy_ratio(df),
+        "edit_distance": lambda df, _: add_edit_distance(df),
+        "numeric_unit_consistency": lambda df, _: add_numeric_unit_consistency(df),
+        "query_category_match": lambda df, _: add_query_category_match(df),
+    }
+
+
+FEATURE_REGISTRY = _feature_registry()
+
+
+def validate_feature_list(features_to_include):
+    seen = set()
+    for feature in features_to_include:
+        if feature in seen:
+            raise ValueError(f"Duplicate feature requested: {feature}")
+        if feature not in FEATURE_REGISTRY:
+            raise ValueError(f"Unknown feature requested: {feature}")
+        seen.add(feature)
+
+
+def generate_feature_combinations(features=None, min_size=1, max_size=4):
+    """Generate bounded feature combinations for automated search."""
+    candidate_features = features or all_features
+    validate_feature_list(candidate_features)
+    combos = []
+    for size in range(min_size, max_size + 1):
+        combos.extend([list(combo) for combo in combinations(candidate_features, size)])
+    return combos
+
+
+def load_feature_sets_from_yaml(config_path):
+    """Load named feature presets from YAML."""
+    config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    presets = config.get("feature_sets", {})
+    if not isinstance(presets, dict):
+        raise ValueError("feature_sets must be a map of preset name -> feature list")
+    loaded_sets = []
+    for _, feature_list in presets.items():
+        validate_feature_list(feature_list)
+        loaded_sets.append(feature_list)
+    return loaded_sets
+
+
 def build_feature_set(df_raw, df_attr, features_to_include, stem=True):
     """Construct selected engineered features."""
     df = df_raw.copy()
+    validate_feature_list(features_to_include)
     if stem:
         cols = ["search_term", "product_title", "product_description"]
         df[cols] = df[cols].apply(lambda col: col.map(str_stemmer))
 
-    if "query_length" in features_to_include:
-        df = add_query_length(df)
-    if "common_words" in features_to_include:
-        df = add_common_word_features(df)
-    if "brand_match" in features_to_include:
-        df = add_brand_match(df, df_attr)
-    if "tfidf_similarity" in features_to_include:
-        df = add_tfidf_similarity(df)
-    if "query_has_number" in features_to_include:
-        df = add_query_has_number(df)
-    if "unit_match" in features_to_include:
-        df = add_unit_match(df)
-    if "initial_term_match" in features_to_include:
-        df = add_initial_term_match(df)
-    if "material_match" in features_to_include:
-        df = add_material_match(df, df_attr)
-    if "color_match" in features_to_include:
-        df = add_color_match(df, df_attr)
-    if "jaccard" in features_to_include:
-        df = add_jaccard_similarity(df)
-    if "bigram_overlap" in features_to_include:
-        df = add_bigram_overlap(df)
-    if "fuzzy" in features_to_include:
-        df = add_fuzzy_ratio(df)
+    for feature_name in features_to_include:
+        transform = FEATURE_REGISTRY[feature_name]
+        df = transform(df, df_attr)
 
     df.drop(["search_term", "product_title", "product_description", "product_uid"], axis=1, inplace=True)
+    if df.columns.duplicated().any():
+        duplicates = list(df.columns[df.columns.duplicated()])
+        raise ValueError(f"Duplicate output columns detected: {duplicates}")
     return df
 

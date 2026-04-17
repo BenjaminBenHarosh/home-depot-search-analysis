@@ -21,7 +21,7 @@ After running the pipeline, use `results.json` and `feature_set_evaluation_resul
 ## Methodology
 
 - Text preprocessing with stemming on query/title/description fields
-- Handpicked NLP feature sets from 1 to 12 features
+- Handpicked and configurable NLP feature sets via registry + YAML presets
 - Model comparison across Random Forest, Gradient Boosting, SVR, and KNN
 - Hyperparameter tuning with `RandomizedSearchCV` and 5-fold cross-validation
 - Statistical comparison using paired t-test
@@ -36,11 +36,13 @@ src/
   modeling.py
   evaluation.py
 main.py
+cli.py
 home_depot.py
 requirements.txt
 ```
 
-- `main.py`: canonical pipeline entrypoint
+- `cli.py`: canonical command-line interface using Click
+- `main.py`: Python entrypoint delegating to shared pipeline orchestration
 - `home_depot.py`: backward-compatible wrapper for legacy command usage
 - `results.json`: machine-readable run summary (created after pipeline execution)
 - `feature_set_evaluation_results.csv`: per-feature-set metrics (created after pipeline execution)
@@ -56,14 +58,19 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python main.py
+python cli.py run full-pipeline --data-dir home-depot-product-search-relevance --output-dir outputs
 ```
 
-Legacy entrypoint still works:
+Other useful commands:
 
 ```bash
-python home_depot.py
+python cli.py run baseline
+python cli.py run compare-models
+python cli.py run tune --n-iter 20
+python cli.py run feature-search --feature-mode yaml --feature-config-path configs/features.yaml
 ```
+
+Legacy entrypoint still works: `python home_depot.py`
 
 ## Data
 
