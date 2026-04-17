@@ -3,6 +3,9 @@
 import json
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
+
+from jsonschema import validate
 
 
 def build_results_summary(
@@ -12,6 +15,8 @@ def build_results_summary(
     best_params,
     feature_results_path="feature_set_evaluation_results.csv",
     run_context=None,
+    run_id=None,
+    schema_version="1.0.0",
 ):
     """Create a stable JSON-serializable summary payload."""
     context = run_context or {}
@@ -21,6 +26,8 @@ def build_results_summary(
         git_sha = "unknown"
 
     return {
+        "schema_version": schema_version,
+        "run_id": run_id,
         "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "git_sha": git_sha,
         "best_model": best_model_name,
@@ -48,8 +55,15 @@ def build_results_summary(
     }
 
 
-def save_results(results_dict, output_path="results.json"):
+def validate_results_summary(results_dict, schema_path="schemas/results_summary.schema.json"):
+    """Validate results summary against JSON schema."""
+    schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
+    validate(instance=results_dict, schema=schema)
+
+
+def save_results(results_dict, output_path="results.json", schema_path="schemas/results_summary.schema.json"):
     """Save run summary to JSON."""
+    validate_results_summary(results_dict, schema_path=schema_path)
     with open(output_path, "w", encoding="utf-8") as handle:
         json.dump(results_dict, handle, indent=2)
 

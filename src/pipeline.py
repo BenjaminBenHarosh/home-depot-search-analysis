@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
+from loguru import logger
 from src.data_loader import load_raw_datasets, prepare_raw_data
 from src.evaluation import build_results_summary, save_results
 from src.feature_engineering import feature_sets, generate_feature_combinations, load_feature_sets_from_yaml
+from src.logging_config import configure_logging
 from src.modeling import (
     benchmark_new_features,
     compare_models,
@@ -25,6 +29,11 @@ def ensure_output_dir(output_dir):
     path = Path(output_dir)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _make_run_id(random_seed):
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return f"{ts}_seed{random_seed}"
 
 
 def run_baseline_stage(data_dir, stem=True):
@@ -95,6 +104,11 @@ def run_feature_search_stage(data_dir, feature_mode="presets", feature_config_pa
 
 def run_full_pipeline(data_dir="home-depot-product-search-relevance", output_dir="outputs", random_seed=42, stem=True):
     output_path = ensure_output_dir(output_dir)
+    run_id = _make_run_id(random_seed)
+    run_path = output_path / "runs" / run_id
+    run_path.mkdir(parents=True, exist_ok=True)
+    configure_logging(output_dir=str(output_path), run_id=run_id, level="INFO")
+    logger.info(f"Starting full pipeline run_id={run_id}")
 
     df_train, df_test, df_attr, df_desc = load_raw_datasets(data_dir)
     raw_data, num_train = prepare_raw_data(df_train, df_test, df_desc)
@@ -107,11 +121,11 @@ def run_full_pipeline(data_dir="home-depot-product-search-relevance", output_dir
     best_params = gb_search.best_params_
     best_params["random_state"] = random_seed
 
-    feature_eval_csv = output_path / "feature_set_evaluation_results.csv"
+    feature_eval_csv = run_path / "feature_set_evaluation_results.csv"
     results_df = run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model_params=best_params)
     results_df.to_csv(feature_eval_csv, index=False)
 
-    plot_overfitting_curve(results_df, save_path=str(output_path / "feature_count_vs_rmse.png"))
+    plot_overfitting_curve(results_df, save_path=str(run_path / "feature_count_vs_rmse.png"))
 
     best_feature_set = ["query_length", "initial_term_match", "jaccard", "common_words", "color_match", "fuzzy", "bigram_overlap"]
     row_match = results_df[results_df["Features"] == ", ".join(best_feature_set)]
@@ -120,10 +134,10 @@ def run_full_pipeline(data_dir="home-depot-product-search-relevance", output_dir
     best_row = row_match.iloc[0]
 
     run_full_feature_importance(raw_data, df_attr, num_train, best_params)
-    generate_submission_file(raw_data, df_attr, num_train, best_feature_set, best_params, output_path=str(output_path / "submission.csv"))
+    generate_submission_file(raw_data, df_attr, num_train, best_feature_set, best_params, output_path=str(run_path / "submission.csv"))
 
     benchmark_df = benchmark_new_features(raw_data, df_attr, num_train, model_params=best_params)
-    benchmark_df.to_csv(output_path / "new_feature_benchmarks.csv", index=False)
+    benchmark_df.to_csv(run_path / "new_feature_benchmarks.csv", index=False)
 
     summary = build_results_summary(
         best_model_name="GradientBoostingRegressor",
@@ -131,14 +145,33 @@ def run_full_pipeline(data_dir="home-depot-product-search-relevance", output_dir
         best_row=best_row,
         best_params=best_params,
         feature_results_path=str(feature_eval_csv),
+        run_id=run_id,
         run_context={
             "command": "run full-pipeline",
             "dataset_dir": data_dir,
-            "output_dir": str(output_path),
+            "output_dir": str(run_path),
             "random_seed": random_seed,
             "stem": stem,
         },
     )
-    save_results(summary, output_path=str(output_path / "results.json"))
+    (run_path / "config_used.json").write_text(
+        json.dumps(
+            {
+                "command": "run full-pipeline",
+                "dataset_dir": data_dir,
+                "output_dir": str(run_path),
+                "random_seed": random_seed,
+                "stem": stem,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    save_results(
+        summary,
+        output_path=str(run_path / "results_summary.json"),
+        schema_path="schemas/results_summary.schema.json",
+    )
+    logger.info(f"Run finished. Results written to {run_path}")
     return summary
 

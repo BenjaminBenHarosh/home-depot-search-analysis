@@ -44,8 +44,9 @@ requirements.txt
 - `cli.py`: canonical command-line interface using Click
 - `main.py`: Python entrypoint delegating to shared pipeline orchestration
 - `home_depot.py`: backward-compatible wrapper for legacy command usage
-- `results.json`: machine-readable run summary (created after pipeline execution)
-- `feature_set_evaluation_results.csv`: per-feature-set metrics (created after pipeline execution)
+- `outputs/runs/<run_id>/results_summary.json`: schema-validated run summary
+- `outputs/runs/<run_id>/config_used.json`: exact run configuration
+- `outputs/runs/<run_id>/logs/run.log`: consolidated run log (INFO/WARNING/ERROR)
 
 ## Setup
 
@@ -71,6 +72,22 @@ python cli.py run feature-search --feature-mode yaml --feature-config-path confi
 ```
 
 Legacy entrypoint still works: `python home_depot.py`
+
+## Outputs Contract
+
+Each full run writes into:
+
+`outputs/runs/<run_id>/`
+
+Key files:
+- `results_summary.json` (validated against `schemas/results_summary.schema.json`)
+- `config_used.json`
+- `feature_set_evaluation_results.csv`
+- `new_feature_benchmarks.csv`
+- `submission.csv`
+- `logs/run.log`
+
+The `results_summary.json` includes `schema_version`, `run_id`, `git_sha`, metrics, artifact paths, and run context metadata.
 
 ## Data
 

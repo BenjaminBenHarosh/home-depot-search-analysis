@@ -45,3 +45,5 @@ pytest==8.3.5
 pytest-cov==6.0.0
 ruff==0.9.10
 mypy==1.15.0
+loguru==0.7.2
+jsonschema==4.23.0

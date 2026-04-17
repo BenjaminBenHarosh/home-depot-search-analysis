@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResultsSummary",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "run_timestamp_utc",
+    "git_sha",
+    "best_model",
+    "best_feature_set",
+    "metrics",
+    "artifacts",
+    "run_context"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "type": "string" },
+    "run_timestamp_utc": { "type": "string" },
+    "git_sha": { "type": "string" },
+    "best_model": { "type": "string" },
+    "best_feature_set": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["rmse_split", "rmse_cv_mean", "rmse_cv_std", "num_features"],
+      "properties": {
+        "rmse_split": { "type": "number" },
+        "rmse_cv_mean": { "type": "number" },
+        "rmse_cv_std": { "type": "number" },
+        "num_features": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "model_params": { "type": "object" },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "feature_evaluation_csv",
+        "submission_csv",
+        "feature_importance_plot",
+        "complexity_plot"
+      ],
+      "properties": {
+        "feature_evaluation_csv": { "type": "string" },
+        "submission_csv": { "type": "string" },
+        "feature_importance_plot": { "type": "string" },
+        "complexity_plot": { "type": "string" }
+      }
+    },
+    "run_context": {
+      "type": "object",
+      "required": ["command", "dataset_dir", "output_dir", "random_seed", "stem"],
+      "properties": {
+        "command": { "type": "string" },
+        "dataset_dir": { "type": "string" },
+        "output_dir": { "type": "string" },
+        "random_seed": { "type": "integer" },
+        "stem": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -77,7 +77,8 @@ def run_feature_search(data_dir, feature_mode, feature_config_path, output_dir, 
 def run_full(data_dir, output_dir, random_seed, stem):
     summary = run_full_pipeline(data_dir=data_dir, output_dir=output_dir, random_seed=random_seed, stem=stem)
     click.echo(f"Pipeline complete. Best model: {summary['best_model']}")
-    click.echo(f"Results: {output_dir}/results.json")
+    click.echo(f"Results run_id: {summary['run_id']}")
+    click.echo(f"Results file: {output_dir}/runs/{summary['run_id']}/results_summary.json")
 
 
 if __name__ == "__main__":

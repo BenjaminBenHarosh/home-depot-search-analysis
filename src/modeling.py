@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from IPython.display import display
+from loguru import logger
 from scipy.stats import randint, ttest_rel, uniform
 from sklearn.base import clone
 from sklearn.ensemble import BaggingRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, RandomForestRegressor
@@ -31,12 +32,12 @@ def evaluate_model(model, X_train, y_train, name="Unnamed Model"):
     cv_scores = cross_val_score(model, X_train, y_train, scoring="neg_root_mean_squared_error", cv=5)
     cv_rmse_mean = -np.mean(cv_scores)
     cv_rmse_std = np.std(cv_scores)
-    print(f"{name}: RMSE = {rmse:.4f}, CV RMSE = {cv_rmse_mean:.4f} ± {cv_rmse_std:.4f}, Train time = {train_time:.2f} sec")
+    logger.info(f"{name}: RMSE = {rmse:.4f}, CV RMSE = {cv_rmse_mean:.4f} ± {cv_rmse_std:.4f}, Train time = {train_time:.2f} sec")
     return name, rmse, train_time
 
 
 def compare_models(df_all, df_attr, feature_set, num_train, stem=True, include_hist_gradient=False):
-    print("\n=== Model Comparison ===")
+    logger.info("=== Model Comparison ===")
     df_features = build_feature_set(df_all.copy(), df_attr, feature_set, stem=stem)
     df_train = df_features.iloc[:num_train]
     X = df_train.drop(columns=["id", "relevance"])
@@ -58,8 +59,7 @@ def compare_models(df_all, df_attr, feature_set, num_train, stem=True, include_h
 
     results_df = pd.DataFrame(results, columns=["Model", "RMSE", "Train time (s)"])
     results_df.sort_values("RMSE", inplace=True)
-    print("\nModel Comparison Results:")
-    print(results_df.to_string(index=False))
+    logger.info("Model Comparison Results:\n{}", results_df.to_string(index=False))
     return results_df
 
 
@@ -78,7 +78,7 @@ def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
         "min_samples_leaf": randint(1, 10),
     }
 
-    print("\n--- Tuning Random Forest ---")
+    logger.info("--- Tuning Random Forest ---")
     rf_search = RandomizedSearchCV(
         RandomForestRegressor(random_state=0),
         rf_param_dist,
@@ -94,14 +94,14 @@ def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
     rf_time = time.time() - start_rf
     rf_best_rmse = -rf_search.best_score_
     rf_std = np.std(rf_search.cv_results_["mean_test_score"])
-    print(f"Random Forest RMSE: {rf_best_rmse:.4f}")
-    print(f"\nBest Random Forest CV RMSE: {rf_best_rmse:.4f} ± {rf_std:.4f}")
-    print(f"Training time: {rf_time:.2f} seconds")
-    print("\nBest Random Forest Parameters:")
+    logger.info(f"Random Forest RMSE: {rf_best_rmse:.4f}")
+    logger.info(f"Best Random Forest CV RMSE: {rf_best_rmse:.4f} ± {rf_std:.4f}")
+    logger.info(f"Training time: {rf_time:.2f} seconds")
+    logger.info("Best Random Forest Parameters:")
     for k, v in rf_search.best_params_.items():
-        print(f"  {k}: {v}")
+        logger.info(f"  {k}: {v}")
 
-    print("\n--- Tuning Gradient Boosting ---")
+    logger.info("--- Tuning Gradient Boosting ---")
     gb_search = RandomizedSearchCV(
         GradientBoostingRegressor(random_state=0),
         gb_param_dist,
@@ -117,29 +117,29 @@ def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
     gb_time = time.time() - start_gb
     gb_best_rmse = -gb_search.best_score_
     gb_std = np.std(gb_search.cv_results_["mean_test_score"])
-    print(f"Gradient Boosting RMSE: {gb_best_rmse:.4f}")
-    print(f"\nBest Gradient Boosting CV RMSE: {gb_best_rmse:.4f} ± {gb_std:.4f}")
-    print(f"Training time: {gb_time:.2f} seconds")
-    print("\nBest Gradient Boosting Parameters:")
+    logger.info(f"Gradient Boosting RMSE: {gb_best_rmse:.4f}")
+    logger.info(f"Best Gradient Boosting CV RMSE: {gb_best_rmse:.4f} ± {gb_std:.4f}")
+    logger.info(f"Training time: {gb_time:.2f} seconds")
+    logger.info("Best Gradient Boosting Parameters:")
     for k, v in gb_search.best_params_.items():
-        print(f"  {k}: {v}")
+        logger.info(f"  {k}: {v}")
 
     rf_rmse_folds = np.mean([-rf_search.cv_results_[f"split{i}_test_score"] for i in range(5)], axis=0)
     gb_rmse_folds = np.mean([-gb_search.cv_results_[f"split{i}_test_score"] for i in range(5)], axis=0)
 
-    print("\nPaired t-test result:")
+    logger.info("Paired t-test result:")
     t_stat, p_val = ttest_rel(rf_rmse_folds, gb_rmse_folds)
-    print(f"t-stat = {t_stat:.4f}, p-value = {p_val:.4f}")
+    logger.info(f"t-stat = {t_stat:.4f}, p-value = {p_val:.4f}")
     if p_val < 0.05:
-        print("The difference is statistically significant.")
+        logger.info("The difference is statistically significant.")
     else:
-        print("The difference is not statistically significant.")
+        logger.info("The difference is not statistically significant.")
 
     return rf_search, gb_search
 
 
 def run_baseline_evaluation(raw_data, df_attr, num_train):
-    print("\n=== Baseline Evaluation ===")
+    logger.info("=== Baseline Evaluation ===")
     baseline_features = ["query_length", "common_words"]
     baseline_model = BaggingRegressor(
         estimator=RandomForestRegressor(n_estimators=15, max_depth=6, random_state=42, n_jobs=-1),
@@ -151,7 +151,7 @@ def run_baseline_evaluation(raw_data, df_attr, num_train):
 
     for stem_flag in [True, False]:
         label = "Stemmed" if stem_flag else "No Stem"
-        print(f"\n[Baseline Model - {label}]")
+        logger.info(f"[Baseline Model - {label}]")
         df_baseline = build_feature_set(raw_data.copy(), df_attr, baseline_features, stem=stem_flag)
         df_train_baseline = df_baseline.iloc[:num_train]
         X = df_train_baseline.drop(columns=["id", "relevance"])
@@ -160,11 +160,11 @@ def run_baseline_evaluation(raw_data, df_attr, num_train):
 
 
 def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model_params=None):
-    print("\n=== Feature Evaluation ===")
+    logger.info("=== Feature Evaluation ===")
     results = []
 
     for stem_flag in [True, False]:
-        print(f"\n--- {'With' if stem_flag else 'Without'} Stemming ---")
+        logger.info(f"--- {'With' if stem_flag else 'Without'} Stemming ---")
         for features in feature_sets:
             start_time = time.time()
             df_features = build_feature_set(raw_data.copy(), df_attr, features, stem=stem_flag)
@@ -201,7 +201,7 @@ def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model
                 }
             )
 
-            print(
+            logger.info(
                 f"Features: {features} --> Split RMSE: {rmse_split:.4f}, CV RMSE: {rmse_cv:.4f} ± {rmse_std:.4f} (train time: {elapsed_time:.2f}s)"
             )
 
@@ -257,11 +257,11 @@ def evaluate_on_test_set(df_all, df_attr, features, num_train, stem=True, model_
 
 
 def generate_submission_file(raw_data, df_attr, num_train, best_features, model_params, output_path="submission.csv"):
-    print("Generating final test predictions with best feature combination...")
+    logger.info("Generating final test predictions with best feature combination...")
     final_submission = evaluate_on_test_set(raw_data, df_attr, num_train=num_train, features=best_features, stem=True, model_params=model_params)
     final_submission["relevance"] = final_submission["relevance"].clip(1.0, 3.0).round(2)
     final_submission.to_csv(output_path, index=False)
-    print(f"Saved predictions to {output_path}.")
+    logger.info(f"Saved predictions to {output_path}.")
 
 
 def plot_relevance_histogram(df_train, save_path="relevance_histogram_annotated.png"):
@@ -309,7 +309,7 @@ def plot_relevance_boxplot(df_train, save_path="relevance_boxplot.png"):
 
 
 def run_data_exploration(df_train, df_attr):
-    print("\n=== Data Exploration ===")
+    logger.info("=== Data Exploration ===")
     total_pairs = df_train.shape[0]
     unique_products = df_train["product_uid"].nunique()
     top_products = df_train["product_uid"].value_counts().head(2)
@@ -349,9 +349,9 @@ def run_data_exploration(df_train, df_attr):
         }
     )
 
-    print("Data Description Summary")
+    logger.info("Data Description Summary")
     display(summary_df)
-    print("\nTop-5 Most Common Brand Names")
+    logger.info("Top-5 Most Common Brand Names")
     top_brands = (
         df_attr[df_attr["name"] == "MFG Brand Name"]["value"].value_counts().head(6).rename_axis("Brand Name").reset_index(name="Count")
     )
@@ -382,8 +382,7 @@ def plot_feature_importance(model, X, y, feature_names, top_n=5, plot=True, save
     model.fit(X, y)
     importances = model.feature_importances_
     importance_df = pd.DataFrame({"feature": feature_names, "importance": importances}).sort_values(by="importance", ascending=False)
-    print(f"\nTop {top_n} most important features:")
-    print(importance_df.head(top_n))
+    logger.info(f"Top {top_n} most important features:\n{importance_df.head(top_n)}")
 
     if plot:
         plt.figure(figsize=(10, 6))
