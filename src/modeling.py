@@ -18,6 +18,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
+from tqdm import tqdm
 
 from src.feature_engineering import all_features, build_feature_set
 
@@ -53,7 +54,7 @@ def compare_models(df_all, df_attr, feature_set, num_train, stem=True, include_h
         models.append(("HistGradientBoosting", HistGradientBoostingRegressor(max_depth=6, random_state=0)))
 
     results = []
-    for name, model in models:
+    for name, model in tqdm(models, desc="Comparing models", unit="model"):
         model_name, rmse, train_time = evaluate_model(model, X, y, name)
         results.append((model_name, rmse, f"{train_time:.2f} sec"))
 
@@ -149,7 +150,7 @@ def run_baseline_evaluation(raw_data, df_attr, num_train):
         max_samples=0.1,
     )
 
-    for stem_flag in [True, False]:
+    for stem_flag in tqdm([True, False], desc="Baseline stem variants", unit="variant"):
         label = "Stemmed" if stem_flag else "No Stem"
         logger.info(f"[Baseline Model - {label}]")
         df_baseline = build_feature_set(raw_data.copy(), df_attr, baseline_features, stem=stem_flag)
@@ -163,9 +164,9 @@ def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model
     logger.info("=== Feature Evaluation ===")
     results = []
 
-    for stem_flag in [True, False]:
+    for stem_flag in tqdm([True, False], desc="Feature evaluation stem variants", unit="variant"):
         logger.info(f"--- {'With' if stem_flag else 'Without'} Stemming ---")
-        for features in feature_sets:
+        for features in tqdm(feature_sets, desc="Feature sets", unit="set", leave=False):
             start_time = time.time()
             df_features = build_feature_set(raw_data.copy(), df_attr, features, stem=stem_flag)
             df_train = df_features.iloc[:num_train]
@@ -308,7 +309,7 @@ def plot_relevance_boxplot(df_train, save_path="relevance_boxplot.png"):
     plt.show()
 
 
-def run_data_exploration(df_train, df_attr):
+def run_data_exploration(df_train, df_attr, output_dir=None):
     logger.info("=== Data Exploration ===")
     total_pairs = df_train.shape[0]
     unique_products = df_train["product_uid"].nunique()
@@ -356,8 +357,12 @@ def run_data_exploration(df_train, df_attr):
         df_attr[df_attr["name"] == "MFG Brand Name"]["value"].value_counts().head(6).rename_axis("Brand Name").reset_index(name="Count")
     )
     display(top_brands)
-    plot_relevance_histogram(df_train)
-    plot_relevance_boxplot(df_train)
+    if output_dir:
+        plot_relevance_histogram(df_train, save_path=os.path.join(output_dir, "relevance_histogram_annotated.png"))
+        plot_relevance_boxplot(df_train, save_path=os.path.join(output_dir, "relevance_boxplot.png"))
+    else:
+        plot_relevance_histogram(df_train)
+        plot_relevance_boxplot(df_train)
 
 
 def plot_overfitting_curve(results_df, save_path="feature_count_vs_rmse.png"):
@@ -402,7 +407,7 @@ def plot_feature_importance(model, X, y, feature_names, top_n=5, plot=True, save
     return importance_df
 
 
-def run_full_feature_importance(raw_data, df_attr, num_train, best_params):
+def run_full_feature_importance(raw_data, df_attr, num_train, best_params, save_path="feature_importance_barplot.png"):
     df_full = build_feature_set(raw_data, df_attr, all_features, stem=True)
     X_all = df_full.iloc[:num_train].drop(columns=["id", "relevance"], errors="ignore")
     y_all = df_full.iloc[:num_train]["relevance"]
@@ -412,7 +417,7 @@ def run_full_feature_importance(raw_data, df_attr, num_train, best_params):
         y_all,
         X_all.columns.tolist(),
         top_n=12,
-        save_path="feature_importance_barplot.png",
+        save_path=save_path,
     )
 
 

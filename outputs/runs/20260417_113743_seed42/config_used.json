@@ -1,0 +1,7 @@
+{
+  "command": "run baseline",
+  "dataset_dir": "home-depot-product-search-relevance",
+  "output_dir": "outputs/runs/20260417_113743_seed42",
+  "random_seed": 42,
+  "stem": true
+}

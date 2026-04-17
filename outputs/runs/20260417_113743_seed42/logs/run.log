@@ -1,0 +1,10 @@
+2026-04-17 14:37:43 | INFO | src.pipeline:run_baseline_stage:45 | Starting baseline run_id=20260417_113743_seed42
+2026-04-17 14:37:44 | INFO | src.modeling:run_data_exploration:313 | === Data Exploration ===
+2026-04-17 14:37:44 | INFO | src.modeling:run_data_exploration:353 | Data Description Summary
+2026-04-17 14:37:44 | INFO | src.modeling:run_data_exploration:355 | Top-5 Most Common Brand Names
+2026-04-17 14:37:49 | INFO | src.modeling:run_baseline_evaluation:143 | === Baseline Evaluation ===
+2026-04-17 14:37:49 | INFO | src.modeling:run_baseline_evaluation:155 | [Baseline Model - Stemmed]
+2026-04-17 14:39:43 | INFO | src.modeling:evaluate_model:36 | Baseline (Stemmed): RMSE = 0.4847, CV RMSE = 0.4864 ± 0.0026, Train time = 2.18 sec
+2026-04-17 14:39:43 | INFO | src.modeling:run_baseline_evaluation:155 | [Baseline Model - No Stem]
+2026-04-17 14:39:47 | INFO | src.modeling:evaluate_model:36 | Baseline (No Stem): RMSE = 0.5185, CV RMSE = 0.5201 ± 0.0020, Train time = 0.43 sec
+2026-04-17 14:39:47 | INFO | src.pipeline:run_baseline_stage:64 | Baseline run finished. Outputs written to outputs/runs/20260417_113743_seed42

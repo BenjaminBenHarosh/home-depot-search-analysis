@@ -36,12 +36,33 @@ def _make_run_id(random_seed):
     return f"{ts}_seed{random_seed}"
 
 
-def run_baseline_stage(data_dir, stem=True):
+def run_baseline_stage(data_dir, output_dir="outputs", random_seed=42, stem=True):
+    output_path = ensure_output_dir(output_dir)
+    run_id = _make_run_id(random_seed)
+    run_path = output_path / "runs" / run_id
+    run_path.mkdir(parents=True, exist_ok=True)
+    configure_logging(output_dir=str(output_path), run_id=run_id, level="INFO")
+    logger.info(f"Starting baseline run_id={run_id}")
+
     df_train, df_test, df_attr, df_desc = load_raw_datasets(data_dir)
     raw_data, num_train = prepare_raw_data(df_train, df_test, df_desc)
-    run_data_exploration(df_train, df_attr)
+    run_data_exploration(df_train, df_attr, output_dir=str(run_path))
     run_baseline_evaluation(raw_data, df_attr, num_train)
-    return {"num_train": num_train, "stem": stem}
+    (run_path / "config_used.json").write_text(
+        json.dumps(
+            {
+                "command": "run baseline",
+                "dataset_dir": data_dir,
+                "output_dir": str(run_path),
+                "random_seed": random_seed,
+                "stem": stem,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    logger.info(f"Baseline run finished. Outputs written to {run_path}")
+    return {"num_train": num_train, "stem": stem, "run_id": run_id, "output_dir": str(run_path)}
 
 
 def run_compare_models_stage(data_dir, stem=True, include_hist_gradient=True):
@@ -113,7 +134,7 @@ def run_full_pipeline(data_dir="home-depot-product-search-relevance", output_dir
     df_train, df_test, df_attr, df_desc = load_raw_datasets(data_dir)
     raw_data, num_train = prepare_raw_data(df_train, df_test, df_desc)
 
-    run_data_exploration(df_train, df_attr)
+    run_data_exploration(df_train, df_attr, output_dir=str(run_path))
     run_baseline_evaluation(raw_data, df_attr, num_train)
     compare_models(raw_data, df_attr, ["query_length", "common_words", "tfidf_similarity"], num_train, stem=stem, include_hist_gradient=True)
 
@@ -133,7 +154,13 @@ def run_full_pipeline(data_dir="home-depot-product-search-relevance", output_dir
         raise ValueError("Specified best feature set not found in results_df.")
     best_row = row_match.iloc[0]
 
-    run_full_feature_importance(raw_data, df_attr, num_train, best_params)
+    run_full_feature_importance(
+        raw_data,
+        df_attr,
+        num_train,
+        best_params,
+        save_path=str(run_path / "feature_importance_barplot.png"),
+    )
     generate_submission_file(raw_data, df_attr, num_train, best_feature_set, best_params, output_path=str(run_path / "submission.csv"))
 
     benchmark_df = benchmark_new_features(raw_data, df_attr, num_train, model_params=best_params)

@@ -23,10 +23,14 @@ def run():
 
 @run.command("baseline")
 @click.option("--data-dir", default="home-depot-product-search-relevance", show_default=True)
+@click.option("--output-dir", default="outputs", show_default=True)
+@click.option("--random-seed", default=42, type=int, show_default=True)
 @click.option("--stem/--no-stem", default=True, show_default=True)
-def run_baseline(data_dir, stem):
-    run_baseline_stage(data_dir=data_dir, stem=stem)
+def run_baseline(data_dir, output_dir, random_seed, stem):
+    summary = run_baseline_stage(data_dir=data_dir, output_dir=output_dir, random_seed=random_seed, stem=stem)
     click.echo("Baseline stage complete.")
+    click.echo(f"Baseline run_id: {summary['run_id']}")
+    click.echo(f"Baseline outputs: {summary['output_dir']}")
 
 
 @run.command("compare-models")
