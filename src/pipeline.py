@@ -14,10 +14,13 @@ from src.evaluation import build_results_summary, save_results
 from src.feature_engineering import feature_sets, generate_feature_combinations, load_feature_sets_from_yaml
 from src.logging_config import configure_logging
 from src.modeling import (
+    STEM_MODE_BOTH,
+    _stem_for_final_model,
     benchmark_new_features,
     compare_models,
     finalist_estimator_cls,
     generate_submission_file,
+    load_models_from_yaml,
     pick_finalist_winner,
     plot_overfitting_curve,
     run_baseline_evaluation,
@@ -26,6 +29,7 @@ from src.modeling import (
     run_feature_set_evaluation,
     run_full_feature_importance,
     run_model_tuning_with_ttest,
+    select_best_feature_set,
 )
 
 
@@ -59,7 +63,7 @@ def _json_safe(obj):
     return json.loads(json.dumps(obj, default=str))
 
 
-def run_baseline_stage(data_dir, output_dir="outputs", random_seed=42, stem=True, log_level="INFO", run_id_explicit=None):
+def run_baseline_stage(data_dir, output_dir="outputs", random_seed=42, stem=True, stem_mode=STEM_MODE_BOTH, log_level="INFO", run_id_explicit=None):
     output_path = ensure_output_dir(output_dir)
     run_id = resolve_run_id(random_seed, run_id_explicit)
     run_path = output_path / "runs" / run_id
@@ -70,7 +74,7 @@ def run_baseline_stage(data_dir, output_dir="outputs", random_seed=42, stem=True
     df_train, df_test, df_attr, df_desc = load_raw_datasets(data_dir)
     raw_data, num_train = prepare_raw_data(df_train, df_test, df_desc)
     run_data_exploration(df_train, df_attr, output_dir=str(run_path))
-    run_baseline_evaluation(raw_data, df_attr, num_train)
+    run_baseline_evaluation(raw_data, df_attr, num_train, stem_mode=stem_mode)
     (run_path / "config_used.json").write_text(
         json.dumps(
             {
@@ -78,7 +82,7 @@ def run_baseline_stage(data_dir, output_dir="outputs", random_seed=42, stem=True
                 "dataset_dir": data_dir,
                 "output_dir": str(run_path),
                 "random_seed": random_seed,
-                "stem": stem,
+                "stem_mode": stem_mode,
             },
             indent=2,
         ),
@@ -96,7 +100,18 @@ def run_compare_models_stage(
     random_seed=42,
     log_level="INFO",
     run_id_explicit=None,
+    models_config=None,
 ):
+    """Run the model comparison stage.
+
+    Parameters
+    ----------
+    models_config:
+        Optional path to a YAML file with a ``model_comparison`` section.
+        When provided, the model list is loaded from that file instead of the
+        built-in defaults.  Defaults to ``configs/models.yaml`` when that file
+        exists, otherwise falls back to the built-in list.
+    """
     run_path = None
     run_id = None
     if output_dir:
@@ -109,6 +124,15 @@ def run_compare_models_stage(
 
     df_train, df_test, df_attr, df_desc = load_raw_datasets(data_dir)
     raw_data, num_train = prepare_raw_data(df_train, df_test, df_desc)
+
+    yaml_models = None
+    _config_path = models_config or "configs/models.yaml"
+    try:
+        yaml_models = load_models_from_yaml(_config_path)
+        logger.info(f"Loaded {len(yaml_models)} models from {_config_path}")
+    except (FileNotFoundError, ValueError) as exc:
+        logger.warning(f"Could not load models from {_config_path} ({exc}); using built-in model list.")
+
     results_df = compare_models(
         raw_data,
         df_attr,
@@ -116,6 +140,7 @@ def run_compare_models_stage(
         num_train,
         stem=stem,
         include_hist_gradient=include_hist_gradient,
+        models=yaml_models,
     )
     out: dict = {"results_df": results_df, "run_id": None, "output_dir": None}
     if output_dir and run_path is not None:
@@ -129,6 +154,7 @@ def run_compare_models_stage(
                     "random_seed": random_seed,
                     "stem": stem,
                     "include_hist_gradient": include_hist_gradient,
+                    "models_config": _config_path,
                 },
                 indent=2,
             ),
@@ -155,7 +181,7 @@ def run_tune_stage(data_dir, random_seed=42, n_iter=10, stem=True, output_dir=No
 
     df_train, df_test, df_attr, df_desc = load_raw_datasets(data_dir)
     raw_data, num_train = prepare_raw_data(df_train, df_test, df_desc)
-    df_features = build_feature_set(raw_data, df_attr, ["query_length", "common_words", "tfidf_similarity"], stem=stem)
+    df_features = build_feature_set(raw_data, df_attr, ["query_length", "common_words", "tfidf_similarity"], stem=stem, num_train=num_train)
     df_train_features = df_features.iloc[:num_train]
     X = df_train_features.drop(columns=["id", "relevance"])
     y = df_train_features["relevance"]
@@ -197,8 +223,10 @@ def run_feature_search_stage(
     output_dir="outputs",
     random_seed=42,
     stem=True,
+    stem_mode=STEM_MODE_BOTH,
     log_level="INFO",
     run_id_explicit=None,
+    use_bagging=True,
 ):
     output_path_base = ensure_output_dir(output_dir)
     run_id = resolve_run_id(random_seed, run_id_explicit)
@@ -236,6 +264,8 @@ def run_feature_search_stage(
         sample_size=30,
         random_seed=random_seed,
         append_path=str(output_csv),
+        use_bagging=use_bagging,
+        stem_mode=stem_mode,
     )
     results_df.to_csv(output_csv, index=False)
     (run_path / "config_used.json").write_text(
@@ -245,9 +275,10 @@ def run_feature_search_stage(
                 "dataset_dir": data_dir,
                 "output_dir": str(run_path),
                 "random_seed": random_seed,
-                "stem": stem,
+                "stem_mode": stem_mode,
                 "feature_mode": feature_mode,
                 "feature_config_path": feature_config_path,
+                "use_bagging": use_bagging,
             },
             indent=2,
         ),
@@ -262,50 +293,65 @@ def run_full_pipeline(
     output_dir="outputs",
     random_seed=42,
     stem=True,
+    stem_mode=STEM_MODE_BOTH,
     log_level="INFO",
     run_id_explicit=None,
     run_model_comparison=False,
 ):
+    """Run the full training pipeline end-to-end.
+
+    Parameters
+    ----------
+    stem_mode:
+        Controls which stemming variants are explored during feature evaluation
+        and baseline.  One of ``"stemmed"``, ``"unstemmed"``, or ``"both"``
+        (default).  The final submission model always uses stemmed text unless
+        ``stem_mode="unstemmed"``.
+    """
     output_path = ensure_output_dir(output_dir)
     run_id = resolve_run_id(random_seed, run_id_explicit)
     run_path = output_path / "runs" / run_id
     run_path.mkdir(parents=True, exist_ok=True)
     configure_logging(output_dir=str(output_path), run_id=run_id, level=log_level)
-    logger.info(f"Starting full pipeline run_id={run_id}")
+    logger.info(f"Starting full pipeline run_id={run_id} stem_mode={stem_mode}")
 
     df_train, df_test, df_attr, df_desc = load_raw_datasets(data_dir)
     raw_data, num_train = prepare_raw_data(df_train, df_test, df_desc)
 
+    final_stem = _stem_for_final_model(stem_mode)
+
     run_data_exploration(df_train, df_attr, output_dir=str(run_path))
-    run_baseline_evaluation(raw_data, df_attr, num_train)
+    run_baseline_evaluation(raw_data, df_attr, num_train, stem_mode=stem_mode)
     if run_model_comparison:
         compare_models(
             raw_data,
             df_attr,
             ["query_length", "common_words", "tfidf_similarity"],
             num_train,
-            stem=stem,
+            stem=final_stem,
             include_hist_gradient=True,
         )
 
-    _, _, winner_search, winner_name, _ = run_tune_stage(data_dir=data_dir, random_seed=random_seed, stem=stem)
+    _, _, winner_search, winner_name, _ = run_tune_stage(
+        data_dir=data_dir,
+        random_seed=random_seed,
+        stem=final_stem,
+        output_dir=output_dir,
+        run_id_explicit=run_id,
+    )
     best_params = winner_search.best_params_.copy()
     best_params["random_state"] = random_seed
     estimator_cls = finalist_estimator_cls(winner_name)
 
     feature_eval_csv = run_path / "feature_set_evaluation_results.csv"
     results_df = run_feature_set_evaluation(
-        raw_data, df_attr, num_train, feature_sets, model_params=best_params, estimator_cls=estimator_cls
+        raw_data, df_attr, num_train, feature_sets, model_params=best_params, estimator_cls=estimator_cls, stem_mode=stem_mode
     )
     results_df.to_csv(feature_eval_csv, index=False)
 
     plot_overfitting_curve(results_df, save_path=str(run_path / "feature_count_vs_rmse.png"))
 
-    best_feature_set = ["query_length", "initial_term_match", "jaccard", "common_words", "color_match", "fuzzy", "bigram_overlap"]
-    row_match = results_df[results_df["Features"] == ", ".join(best_feature_set)]
-    if row_match.empty:
-        raise ValueError("Specified best feature set not found in results_df.")
-    best_row = row_match.iloc[0]
+    best_feature_set, best_row = select_best_feature_set(results_df)
 
     run_full_feature_importance(
         raw_data,
@@ -322,6 +368,7 @@ def run_full_pipeline(
         best_feature_set,
         best_params,
         output_path=str(run_path / "submission.csv"),
+        stem=final_stem,
         estimator_cls=estimator_cls,
     )
 
@@ -340,7 +387,7 @@ def run_full_pipeline(
             "dataset_dir": data_dir,
             "output_dir": str(run_path),
             "random_seed": random_seed,
-            "stem": stem,
+            "stem_mode": stem_mode,
         },
     )
     (run_path / "config_used.json").write_text(
@@ -350,7 +397,7 @@ def run_full_pipeline(
                 "dataset_dir": data_dir,
                 "output_dir": str(run_path),
                 "random_seed": random_seed,
-                "stem": stem,
+                "stem_mode": stem_mode,
                 "run_model_comparison": run_model_comparison,
             },
             indent=2,

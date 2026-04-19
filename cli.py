@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import click
 
 from src.data_validation import check_data_dir
+from src.modeling import STEM_MODES
 from src.pipeline import (
     run_baseline_stage,
     run_compare_models_stage,
@@ -70,13 +71,19 @@ def _stage_errors():
 @click.option("--data-dir", default="home-depot-product-search-relevance", show_default=True)
 @click.option("--output-dir", default="outputs", show_default=True)
 @click.option("--random-seed", default=42, type=int, show_default=True)
-@click.option("--stem/--no-stem", default=True, show_default=True)
+@click.option(
+    "--stem-mode",
+    type=click.Choice(list(STEM_MODES), case_sensitive=False),
+    default="both",
+    show_default=True,
+    help="Which stemming variants to evaluate: 'stemmed', 'unstemmed', or 'both'.",
+)
 @click.option(
     "--run-id",
     default=None,
     help="Optional fixed run id (letters, digits, ._- only). Default: timestamp_seed.",
 )
-def run_baseline(ctx: click.Context, data_dir: str, output_dir: str, random_seed: int, stem: bool, run_id: str | None):
+def run_baseline(ctx: click.Context, data_dir: str, output_dir: str, random_seed: int, stem_mode: str, run_id: str | None):
     with _stage_errors():
         data_dir = _validate_data_dir(data_dir)
         log_level = ctx.obj["log_level"]
@@ -84,7 +91,7 @@ def run_baseline(ctx: click.Context, data_dir: str, output_dir: str, random_seed
             data_dir=data_dir,
             output_dir=output_dir,
             random_seed=random_seed,
-            stem=stem,
+            stem_mode=stem_mode,
             log_level=log_level,
             run_id_explicit=run_id,
         )
@@ -101,6 +108,12 @@ def run_baseline(ctx: click.Context, data_dir: str, output_dir: str, random_seed
 @click.option("--stem/--no-stem", default=True, show_default=True)
 @click.option("--include-hist-gradient/--no-include-hist-gradient", default=True, show_default=True)
 @click.option("--run-id", default=None, help="Optional fixed run id (letters, digits, ._- only).")
+@click.option(
+    "--models-config",
+    default="configs/models.yaml",
+    show_default=True,
+    help="Path to YAML file with a 'model_comparison' section. Falls back to built-in list if file is missing or invalid.",
+)
 def run_compare_models(
     ctx: click.Context,
     data_dir: str,
@@ -109,6 +122,7 @@ def run_compare_models(
     stem: bool,
     include_hist_gradient: bool,
     run_id: str | None,
+    models_config: str,
 ):
     with _stage_errors():
         data_dir = _validate_data_dir(data_dir)
@@ -121,6 +135,7 @@ def run_compare_models(
             random_seed=random_seed,
             log_level=log_level,
             run_id_explicit=run_id,
+            models_config=models_config,
         )
     click.echo(out["results_df"].to_string(index=False))
     if out.get("run_id"):
@@ -172,8 +187,23 @@ def run_tune(
 @click.option("--feature-config-path", default="configs/features.yaml", show_default=True)
 @click.option("--output-dir", default="outputs", show_default=True)
 @click.option("--random-seed", default=42, type=int, show_default=True)
-@click.option("--stem/--no-stem", default=True, show_default=True)
+@click.option(
+    "--stem-mode",
+    type=click.Choice(list(STEM_MODES), case_sensitive=False),
+    default="both",
+    show_default=True,
+    help="Which stemming variants to evaluate: 'stemmed', 'unstemmed', or 'both' (default). Use 'stemmed' or 'unstemmed' to halve evaluation time.",
+)
 @click.option("--run-id", default=None, help="Optional fixed run id (letters, digits, ._- only).")
+@click.option(
+    "--bagging/--no-bagging",
+    default=True,
+    show_default=True,
+    help=(
+        "Use BaggingRegressor(max_samples=0.1) during feature search for speed (default on). "
+        "Disable with --no-bagging for RMSE numbers directly comparable to the final model."
+    ),
+)
 def run_feature_search(
     ctx: click.Context,
     data_dir: str,
@@ -181,8 +211,9 @@ def run_feature_search(
     feature_config_path: str,
     output_dir: str,
     random_seed: int,
-    stem: bool,
+    stem_mode: str,
     run_id: str | None,
+    bagging: bool,
 ):
     with _stage_errors():
         data_dir = _validate_data_dir(data_dir)
@@ -193,9 +224,10 @@ def run_feature_search(
             feature_config_path=feature_config_path,
             output_dir=output_dir,
             random_seed=random_seed,
-            stem=stem,
+            stem_mode=stem_mode,
             log_level=log_level,
             run_id_explicit=run_id,
+            use_bagging=bagging,
         )
     click.echo(f"Feature search run_id: {out['run_id']}")
     click.echo(f"Feature search complete. Saved to {out['csv_path']}.")
@@ -207,7 +239,16 @@ def run_feature_search(
 @click.option("--data-dir", default="home-depot-product-search-relevance", show_default=True)
 @click.option("--output-dir", default="outputs", show_default=True)
 @click.option("--random-seed", default=42, type=int, show_default=True)
-@click.option("--stem/--no-stem", default=True, show_default=True)
+@click.option(
+    "--stem-mode",
+    type=click.Choice(list(STEM_MODES), case_sensitive=False),
+    default="both",
+    show_default=True,
+    help=(
+        "Which stemming variants to explore: 'stemmed', 'unstemmed', or 'both' (default). "
+        "The final submission model uses stemmed text unless 'unstemmed' is chosen."
+    ),
+)
 @click.option("--run-id", default=None, help="Optional fixed run id (letters, digits, ._- only).")
 @click.option(
     "--compare-models/--no-compare-models",
@@ -220,7 +261,7 @@ def run_full(
     data_dir: str,
     output_dir: str,
     random_seed: int,
-    stem: bool,
+    stem_mode: str,
     run_id: str | None,
     compare_models: bool,
 ):
@@ -231,7 +272,7 @@ def run_full(
             data_dir=data_dir,
             output_dir=output_dir,
             random_seed=random_seed,
-            stem=stem,
+            stem_mode=stem_mode,
             log_level=log_level,
             run_id_explicit=run_id,
             run_model_comparison=compare_models,

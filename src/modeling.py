@@ -7,6 +7,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import yaml
 from IPython.display import display
 from loguru import logger
 from scipy.stats import randint, ttest_rel, uniform
@@ -24,6 +25,111 @@ from src.feature_engineering import all_features, build_feature_set
 
 FINALIST_HISTGB = "HistGradientBoostingRegressor"
 FINALIST_RANDOM_FOREST = "RandomForestRegressor"
+
+STEM_MODE_BOTH = "both"
+STEM_MODE_STEMMED = "stemmed"
+STEM_MODE_UNSTEMMED = "unstemmed"
+STEM_MODES = (STEM_MODE_STEMMED, STEM_MODE_UNSTEMMED, STEM_MODE_BOTH)
+
+
+def _stem_variants(stem_mode: str) -> list[bool]:
+    """Convert a stem_mode string to the list of boolean flags to iterate over."""
+    if stem_mode == STEM_MODE_STEMMED:
+        return [True]
+    if stem_mode == STEM_MODE_UNSTEMMED:
+        return [False]
+    return [True, False]  # "both"
+
+
+def _stem_for_final_model(stem_mode: str) -> bool:
+    """Return the stemming flag to use for the final trained model given the chosen mode."""
+    return stem_mode != STEM_MODE_UNSTEMMED
+
+_CLASS_MAP = {
+    "RandomForestRegressor": RandomForestRegressor,
+    "GradientBoostingRegressor": GradientBoostingRegressor,
+    "HistGradientBoostingRegressor": HistGradientBoostingRegressor,
+    "KNeighborsRegressor": KNeighborsRegressor,
+    "SVR": SVR,
+}
+
+
+def select_best_feature_set(results_df: pd.DataFrame) -> tuple[list[str], pd.Series]:
+    """Return the feature list and result row with the lowest CV RMSE.
+
+    Parameters
+    ----------
+    results_df:
+        DataFrame produced by ``run_feature_set_evaluation``.  Must contain
+        columns ``"Features"`` (comma-separated feature names) and
+        ``"RMSE (CV)"``.
+
+    Returns
+    -------
+    best_feature_set:
+        Ordered list of feature name strings.
+    best_row:
+        The corresponding row from *results_df*.
+    """
+    best_row = results_df.sort_values("RMSE (CV)").iloc[0]
+    best_feature_set = [f.strip() for f in best_row["Features"].split(",")]
+    logger.info(
+        "Auto-selected best feature set: {} (CV RMSE {:.4f}, stemming={})",
+        best_feature_set,
+        best_row["RMSE (CV)"],
+        best_row.get("Stemming", "unknown"),
+    )
+    return best_feature_set, best_row
+
+
+def load_models_from_yaml(config_path: str) -> list[tuple[str, object]]:
+    """Load a model comparison list from a YAML config.
+
+    The YAML must contain a ``model_comparison`` key with a list of entries:
+
+    .. code-block:: yaml
+
+        model_comparison:
+          - name: Random Forest
+            class: RandomForestRegressor
+            params:
+              n_estimators: 15
+              max_depth: 6
+              random_state: 0
+          - name: Support Vector Regressor
+            class: SVR
+            pipeline: true        # wraps in StandardScaler pipeline
+            params:
+              kernel: rbf
+
+    Returns
+    -------
+    List of ``(name, estimator)`` tuples ready to pass into ``compare_models``.
+    """
+    with open(config_path, encoding="utf-8") as fh:
+        config = yaml.safe_load(fh)
+
+    entries = config.get("model_comparison")
+    if not entries:
+        raise ValueError(f"No 'model_comparison' key found in {config_path}")
+
+    models = []
+    for entry in entries:
+        name = entry["name"]
+        cls_name = entry["class"]
+        params = entry.get("params", {})
+        use_pipeline = entry.get("pipeline", False)
+
+        cls = _CLASS_MAP.get(cls_name)
+        if cls is None:
+            raise ValueError(f"Unknown model class '{cls_name}' in {config_path}. Supported: {list(_CLASS_MAP)}")
+
+        estimator = cls(**params)
+        if use_pipeline:
+            estimator = make_pipeline(StandardScaler(), estimator)
+        models.append((name, estimator))
+
+    return models
 
 
 def pick_finalist_winner(hist_search, rf_search):
@@ -55,21 +161,31 @@ def evaluate_model(model, X_train, y_train, name="Unnamed Model"):
     return name, rmse, train_time
 
 
-def compare_models(df_all, df_attr, feature_set, num_train, stem=True, include_hist_gradient=False):
+def compare_models(df_all, df_attr, feature_set, num_train, stem=True, include_hist_gradient=False, models=None):
+    """Compare a set of regression models on a fixed feature set.
+
+    Parameters
+    ----------
+    models:
+        Optional list of ``(name, estimator)`` tuples.  When provided this
+        overrides the built-in list (and ``include_hist_gradient`` is ignored).
+        Load from YAML via :func:`load_models_from_yaml`.
+    """
     logger.info("=== Model Comparison ===")
-    df_features = build_feature_set(df_all.copy(), df_attr, feature_set, stem=stem)
+    df_features = build_feature_set(df_all.copy(), df_attr, feature_set, stem=stem, num_train=num_train)
     df_train = df_features.iloc[:num_train]
     X = df_train.drop(columns=["id", "relevance"])
     y = df_train["relevance"]
 
-    models = [
-        ("Random Forest", RandomForestRegressor(n_estimators=15, max_depth=6, random_state=0)),
-        ("Gradient Boosting", GradientBoostingRegressor(n_estimators=15, max_depth=6, random_state=0)),
-        ("Support Vector Regressor", make_pipeline(StandardScaler(), SVR(kernel="rbf", C=1.0, epsilon=0.2))),
-        ("KNN", KNeighborsRegressor(n_neighbors=5)),
-    ]
-    if include_hist_gradient:
-        models.append(("HistGradientBoosting", HistGradientBoostingRegressor(max_depth=6, random_state=0)))
+    if models is None:
+        models = [
+            ("Random Forest", RandomForestRegressor(n_estimators=15, max_depth=6, random_state=0)),
+            ("Gradient Boosting", GradientBoostingRegressor(n_estimators=15, max_depth=6, random_state=0)),
+            ("Support Vector Regressor", make_pipeline(StandardScaler(), SVR(kernel="rbf", C=1.0, epsilon=0.2))),
+            ("KNN", KNeighborsRegressor(n_neighbors=5)),
+        ]
+        if include_hist_gradient:
+            models.append(("HistGradientBoosting", HistGradientBoostingRegressor(max_depth=6, random_state=0)))
 
     results = []
     for name, model in tqdm(models, desc="Comparing models", unit="model"):
@@ -161,7 +277,15 @@ def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
     return hist_search, rf_search
 
 
-def run_baseline_evaluation(raw_data, df_attr, num_train):
+def run_baseline_evaluation(raw_data, df_attr, num_train, stem_mode=STEM_MODE_BOTH):
+    """Run the baseline model evaluation.
+
+    Parameters
+    ----------
+    stem_mode:
+        Which stemming variants to evaluate.  One of ``"stemmed"``,
+        ``"unstemmed"``, or ``"both"`` (default).
+    """
     logger.info("=== Baseline Evaluation ===")
     baseline_features = ["query_length", "common_words"]
     baseline_model = BaggingRegressor(
@@ -172,25 +296,48 @@ def run_baseline_evaluation(raw_data, df_attr, num_train):
         max_samples=0.1,
     )
 
-    for stem_flag in tqdm([True, False], desc="Baseline stem variants", unit="variant"):
+    for stem_flag in tqdm(_stem_variants(stem_mode), desc="Baseline stem variants", unit="variant"):
         label = "Stemmed" if stem_flag else "No Stem"
         logger.info(f"[Baseline Model - {label}]")
-        df_baseline = build_feature_set(raw_data.copy(), df_attr, baseline_features, stem=stem_flag)
+        df_baseline = build_feature_set(raw_data.copy(), df_attr, baseline_features, stem=stem_flag, num_train=num_train)
         df_train_baseline = df_baseline.iloc[:num_train]
         X = df_train_baseline.drop(columns=["id", "relevance"])
         y = df_train_baseline["relevance"]
         evaluate_model(baseline_model, X, y, name=f"Baseline ({label})")
 
 
-def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model_params=None, estimator_cls=GradientBoostingRegressor):
+def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model_params=None, estimator_cls=GradientBoostingRegressor, use_bagging=True, stem_mode=STEM_MODE_BOTH):
+    """Evaluate a list of feature sets with cross-validation.
+
+    Parameters
+    ----------
+    use_bagging:
+        When ``True`` (default) wraps the estimator in
+        ``BaggingRegressor(max_samples=0.1, n_estimators=45)`` for faster
+        search.  **RMSE from bagging runs will be lower than the final
+        full-data model** — treat them as relative rankings only.
+        Pass ``False`` for a direct comparison with the final submission model.
+    stem_mode:
+        Which stemming variants to evaluate.  One of ``"stemmed"``,
+        ``"unstemmed"``, or ``"both"`` (default).  Use ``"stemmed"`` or
+        ``"unstemmed"`` to cut evaluation time roughly in half.
+    """
     logger.info("=== Feature Evaluation ===")
+    variants = _stem_variants(stem_mode)
+    logger.info("Stem mode: {} → evaluating variants: {}", stem_mode, ["stemmed" if v else "unstemmed" for v in variants])
+    if use_bagging:
+        logger.warning(
+            "Feature search is using BaggingRegressor(max_samples=0.1, n_estimators=45) for speed. "
+            "Reported RMSE values are approximations and will differ from the final full-data model. "
+            "Use --no-bagging for an exact comparison."
+        )
     results = []
 
-    for stem_flag in tqdm([True, False], desc="Feature evaluation stem variants", unit="variant"):
+    for stem_flag in tqdm(variants, desc="Feature evaluation stem variants", unit="variant"):
         logger.info(f"--- {'With' if stem_flag else 'Without'} Stemming ---")
         for features in tqdm(feature_sets, desc="Feature sets", unit="set", leave=False):
             start_time = time.time()
-            df_features = build_feature_set(raw_data.copy(), df_attr, features, stem=stem_flag)
+            df_features = build_feature_set(raw_data.copy(), df_attr, features, stem=stem_flag, num_train=num_train)
             df_train = df_features.iloc[:num_train]
             X = df_train.drop(columns=["id", "relevance"])
             y = df_train["relevance"]
@@ -204,7 +351,10 @@ def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model
                     model_params = {"n_estimators": 100, "max_depth": 7, "random_state": 42}
 
             base_model = estimator_cls(**model_params)
-            model = BaggingRegressor(estimator=base_model, n_estimators=45, random_state=42, n_jobs=-1, max_samples=0.1)
+            if use_bagging:
+                model = BaggingRegressor(estimator=base_model, n_estimators=45, random_state=42, n_jobs=-1, max_samples=0.1)
+            else:
+                model = base_model
 
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
             model.fit(X_train, y_train)
@@ -249,6 +399,8 @@ def run_feature_search(
     sample_size=25,
     random_seed=42,
     append_path=None,
+    use_bagging=True,
+    stem_mode=STEM_MODE_BOTH,
 ):
     """Run feature search with optional random sampling and resumable output."""
     candidate_sets = list(feature_sets)
@@ -257,7 +409,7 @@ def run_feature_search(
         candidate_sets = rng.sample(candidate_sets, sample_size)
 
     results_df = run_feature_set_evaluation(
-        raw_data, df_attr, num_train, candidate_sets, model_params=model_params, estimator_cls=estimator_cls
+        raw_data, df_attr, num_train, candidate_sets, model_params=model_params, estimator_cls=estimator_cls, use_bagging=use_bagging, stem_mode=stem_mode
     )
     results_df["Search Mode"] = search_mode
     results_df["Random Seed"] = random_seed
@@ -271,7 +423,7 @@ def run_feature_search(
 
 
 def evaluate_on_test_set(df_all, df_attr, features, num_train, stem=True, model_params=None, estimator_cls=GradientBoostingRegressor):
-    df_features = build_feature_set(df_all.copy(), df_attr, features, stem=stem)
+    df_features = build_feature_set(df_all.copy(), df_attr, features, stem=stem, num_train=num_train)
     df_train = df_features.iloc[:num_train]
     df_test = df_features.iloc[num_train:]
     X_train = df_train.drop(columns=["id", "relevance"])
@@ -299,6 +451,7 @@ def generate_submission_file(
     best_features,
     model_params,
     output_path="submission.csv",
+    stem=True,
     estimator_cls=GradientBoostingRegressor,
 ):
     logger.info("Generating final test predictions with best feature combination...")
@@ -307,7 +460,7 @@ def generate_submission_file(
         df_attr,
         num_train=num_train,
         features=best_features,
-        stem=True,
+        stem=stem,
         model_params=model_params,
         estimator_cls=estimator_cls,
     )
@@ -466,7 +619,7 @@ def run_full_feature_importance(
     save_path="feature_importance_barplot.png",
     estimator_cls=GradientBoostingRegressor,
 ):
-    df_full = build_feature_set(raw_data, df_attr, all_features, stem=True)
+    df_full = build_feature_set(raw_data, df_attr, all_features, stem=True, num_train=num_train)
     X_all = df_full.iloc[:num_train].drop(columns=["id", "relevance"], errors="ignore")
     y_all = df_full.iloc[:num_train]["relevance"]
     return plot_feature_importance(

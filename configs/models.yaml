@@ -1,3 +1,33 @@
+model_comparison:
+  - name: Random Forest
+    class: RandomForestRegressor
+    params:
+      n_estimators: 15
+      max_depth: 6
+      random_state: 0
+  - name: Gradient Boosting
+    class: GradientBoostingRegressor
+    params:
+      n_estimators: 15
+      max_depth: 6
+      random_state: 0
+  - name: HistGradientBoosting
+    class: HistGradientBoostingRegressor
+    params:
+      max_depth: 6
+      random_state: 0
+  - name: KNN
+    class: KNeighborsRegressor
+    params:
+      n_neighbors: 5
+  - name: Support Vector Regressor
+    class: SVR
+    pipeline: true
+    params:
+      kernel: rbf
+      C: 1.0
+      epsilon: 0.2
+
 model_search:
   random_forest:
     n_estimators: [100, 200, 300]

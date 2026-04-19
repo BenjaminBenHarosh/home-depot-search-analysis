@@ -221,9 +221,12 @@ def add_brand_match(df, df_attr):
     return df
 
 
-def add_tfidf_similarity(df):
+def add_tfidf_similarity(df, num_train=None):
     tfidf = TfidfVectorizer()
-    tfidf_matrix = tfidf.fit_transform(df["product_title"] + " " + df["product_description"])
+    product_text = df["product_title"] + " " + df["product_description"]
+    train_text = product_text.iloc[:num_train] if num_train is not None else product_text
+    tfidf.fit(train_text)
+    tfidf_matrix = tfidf.transform(product_text)
     query_matrix = tfidf.transform(df["search_term"])
     df["tfidf_similarity"] = [cosine_similarity(query_matrix[i], tfidf_matrix[i])[0, 0] for i in range(len(df))]
     return df
@@ -307,23 +310,23 @@ def add_query_category_match(df):
     return df
 
 
-def _feature_registry() -> dict[str, Callable[[pd.DataFrame, pd.DataFrame], pd.DataFrame]]:
+def _feature_registry() -> dict[str, Callable]:
     return {
-        "query_length": lambda df, _: add_query_length(df),
-        "common_words": lambda df, _: add_common_word_features(df),
-        "brand_match": add_brand_match,
-        "tfidf_similarity": lambda df, _: add_tfidf_similarity(df),
-        "query_has_number": lambda df, _: add_query_has_number(df),
-        "unit_match": lambda df, _: add_unit_match(df),
-        "initial_term_match": lambda df, _: add_initial_term_match(df),
-        "material_match": add_material_match,
-        "color_match": add_color_match,
-        "jaccard": lambda df, _: add_jaccard_similarity(df),
-        "bigram_overlap": lambda df, _: add_bigram_overlap(df),
-        "fuzzy": lambda df, _: add_fuzzy_ratio(df),
-        "edit_distance": lambda df, _: add_edit_distance(df),
-        "numeric_unit_consistency": lambda df, _: add_numeric_unit_consistency(df),
-        "query_category_match": lambda df, _: add_query_category_match(df),
+        "query_length": lambda df, _, __: add_query_length(df),
+        "common_words": lambda df, _, __: add_common_word_features(df),
+        "brand_match": lambda df, attr, __: add_brand_match(df, attr),
+        "tfidf_similarity": lambda df, _, num_train: add_tfidf_similarity(df, num_train),
+        "query_has_number": lambda df, _, __: add_query_has_number(df),
+        "unit_match": lambda df, _, __: add_unit_match(df),
+        "initial_term_match": lambda df, _, __: add_initial_term_match(df),
+        "material_match": lambda df, attr, __: add_material_match(df, attr),
+        "color_match": lambda df, attr, __: add_color_match(df, attr),
+        "jaccard": lambda df, _, __: add_jaccard_similarity(df),
+        "bigram_overlap": lambda df, _, __: add_bigram_overlap(df),
+        "fuzzy": lambda df, _, __: add_fuzzy_ratio(df),
+        "edit_distance": lambda df, _, __: add_edit_distance(df),
+        "numeric_unit_consistency": lambda df, _, __: add_numeric_unit_consistency(df),
+        "query_category_match": lambda df, _, __: add_query_category_match(df),
     }
 
 
@@ -363,8 +366,18 @@ def load_feature_sets_from_yaml(config_path):
     return loaded_sets
 
 
-def build_feature_set(df_raw, df_attr, features_to_include, stem=True):
-    """Construct selected engineered features."""
+def build_feature_set(df_raw, df_attr, features_to_include, stem=True, num_train=None):
+    """Construct selected engineered features.
+
+    Parameters
+    ----------
+    num_train:
+        Number of rows that belong to the training split (``df_raw.iloc[:num_train]``).
+        When provided, any feature that requires fitting (e.g. TF-IDF vectorizer) will
+        be fit only on training rows to prevent data leakage into validation/test rows.
+        Pass ``None`` (default) when building features for a pure test frame where no
+        leakage risk exists.
+    """
     df = df_raw.copy()
     validate_feature_list(features_to_include)
     if stem:
@@ -373,7 +386,7 @@ def build_feature_set(df_raw, df_attr, features_to_include, stem=True):
 
     for feature_name in features_to_include:
         transform = FEATURE_REGISTRY[feature_name]
-        df = transform(df, df_attr)
+        df = transform(df, df_attr, num_train)
 
     df.drop(["search_term", "product_title", "product_description", "product_uid"], axis=1, inplace=True)
     if df.columns.duplicated().any():
