@@ -16,15 +16,15 @@ Current values below are placeholders from assignment notes and should be treate
 - Kaggle rank: `TBD`
 - Training time: `TBD`
 
-After running the pipeline, use `results.json` and `feature_set_evaluation_results.csv` as the source of truth for updating this section.
+After running the pipeline, use **`outputs/runs/<run_id>/results_summary.json`** as the source of truth for metrics and artifact paths, and **`outputs/runs/<run_id>/feature_set_evaluation_results.csv`** for the feature-set sweep table when refreshing this section from a new run.
 
 ## Methodology
 
 - Text preprocessing with stemming on query/title/description fields
 - Handpicked and configurable NLP feature sets via registry + YAML presets
-- Model comparison across Random Forest, Gradient Boosting, SVR, and KNN
-- Hyperparameter tuning with `RandomizedSearchCV` and 5-fold cross-validation
-- Statistical comparison using paired t-test
+- Optional model comparison (Random Forest, Gradient Boosting, SVR, KNN, and optional HistGradientBoosting) via `run compare-models` or `run full-pipeline --compare-models`
+- Two-finalist hyperparameter search: `HistGradientBoostingRegressor` and `RandomForestRegressor` with `RandomizedSearchCV` (5-fold CV); the better finalist by CV RMSE drives feature evaluation and submission
+- Statistical comparison between the two finalists using a paired t-test on per-fold RMSE
 
 ## Project Structure
 
@@ -56,13 +56,17 @@ source venv/bin/activate  # Windows: venv\\Scripts\\activate
 pip install -r requirements.txt
 ```
 
+If you hit binary-extension errors with NumPy 2.x (for example `pyarrow`, `numexpr`), use a fresh venv or pin `numpy<2` until the rest of your stack catches up.
+
 ## Run
 
 ```bash
 python cli.py run full-pipeline --data-dir home-depot-product-search-relevance --output-dir outputs
 ```
 
-Other useful commands:
+Full pipeline skips the broad model comparison by default (faster). After changing features or data, rerun a survey occasionally with **`--compare-models`**, or run **`python cli.py run compare-models`** as a separate stage.
+
+Other useful commands (each stage that writes files uses **`outputs/runs/<run_id>/`** under `--output-dir`):
 
 ```bash
 python cli.py run baseline
@@ -71,7 +75,24 @@ python cli.py run tune --n-iter 20
 python cli.py run feature-search --feature-mode yaml --feature-config-path configs/features.yaml
 ```
 
+**Golden path** (baseline then full pipeline; open the printed `results_summary.json` path after full-pipeline):
+
+```bash
+python cli.py run baseline --data-dir home-depot-product-search-relevance --output-dir outputs
+python cli.py run full-pipeline --data-dir home-depot-product-search-relevance --output-dir outputs
+```
+
 Legacy entrypoint still works: `python home_depot.py`
+
+### Browse run results (optional)
+
+`streamlit` is included in `requirements.txt`. After install, run:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The app only lists runs that include `results_summary.json` (for example from `run full-pipeline`). It does not upload data.
 
 ## Outputs Contract
 
@@ -86,6 +107,8 @@ Key files:
 - `new_feature_benchmarks.csv`
 - `submission.csv`
 - `logs/run.log`
+
+Stages may also write stage-specific files in the same run directory, for example `model_comparison.csv` (compare-models), `tune_best_params.json` (tune; includes both finalists and `selected_finalist`), or `feature_search_results.csv` (feature-search).
 
 The `results_summary.json` includes `schema_version`, `run_id`, `git_sha`, metrics, artifact paths, and run context metadata.
 

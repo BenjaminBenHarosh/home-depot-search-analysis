@@ -16,7 +16,7 @@ matplotlib==3.10.3
 matplotlib-inline==0.1.7
 nltk==3.9.1
 numpy==2.3.0
-packaging==25.0
+packaging>=20,<25
 pandas==2.3.0
 parso==0.8.4
 pexpect==4.9.0
@@ -47,3 +47,4 @@ ruff==0.9.10
 mypy==1.15.0
 loguru==0.7.2
 jsonschema==4.23.0
+streamlit==1.43.2

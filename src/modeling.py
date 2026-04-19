@@ -22,6 +22,24 @@ from tqdm import tqdm
 
 from src.feature_engineering import all_features, build_feature_set
 
+FINALIST_HISTGB = "HistGradientBoostingRegressor"
+FINALIST_RANDOM_FOREST = "RandomForestRegressor"
+
+
+def pick_finalist_winner(hist_search, rf_search):
+    """Pick the finalist with better CV score (maximized neg RMSE)."""
+    if hist_search.best_score_ >= rf_search.best_score_:
+        return hist_search, FINALIST_HISTGB
+    return rf_search, FINALIST_RANDOM_FOREST
+
+
+def finalist_estimator_cls(name: str):
+    if name == FINALIST_HISTGB:
+        return HistGradientBoostingRegressor
+    if name == FINALIST_RANDOM_FOREST:
+        return RandomForestRegressor
+    raise ValueError(f"Unknown finalist model name: {name!r}")
+
 
 def evaluate_model(model, X_train, y_train, name="Unnamed Model"):
     X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
@@ -64,24 +82,53 @@ def compare_models(df_all, df_attr, feature_set, num_train, stem=True, include_h
     return results_df
 
 
+def _fold_neg_rmse_for_best(search, n_splits=5):
+    idx = search.best_index_
+    return np.array([-search.cv_results_[f"split{j}_test_score"][idx] for j in range(n_splits)])
+
+
 def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
+    hist_param_dist = {
+        "max_iter": randint(50, 200),
+        "max_depth": randint(3, 15),
+        "learning_rate": uniform(0.01, 0.3),
+        "min_samples_leaf": randint(1, 20),
+        "l2_regularization": uniform(0.0, 1.0),
+    }
     rf_param_dist = {
         "n_estimators": randint(50, 200),
         "max_depth": randint(4, 15),
         "min_samples_split": randint(2, 10),
         "min_samples_leaf": randint(1, 10),
     }
-    gb_param_dist = {
-        "n_estimators": randint(50, 200),
-        "max_depth": randint(3, 10),
-        "learning_rate": uniform(0.01, 0.3),
-        "min_samples_split": randint(2, 10),
-        "min_samples_leaf": randint(1, 10),
-    }
+
+    logger.info("--- Tuning HistGradientBoosting ---")
+    hist_search = RandomizedSearchCV(
+        HistGradientBoostingRegressor(random_state=0),
+        hist_param_dist,
+        n_iter=n_iter,
+        cv=5,
+        scoring="neg_root_mean_squared_error",
+        random_state=random_seed,
+        n_jobs=-1,
+        verbose=0,
+    )
+    start_hist = time.time()
+    hist_search.fit(X, y)
+    hist_time = time.time() - start_hist
+    hist_rmse_folds = _fold_neg_rmse_for_best(hist_search)
+    hist_best_rmse = float(np.mean(hist_rmse_folds))
+    hist_std = float(np.std(hist_rmse_folds))
+    logger.info(f"HistGradientBoosting RMSE: {hist_best_rmse:.4f}")
+    logger.info(f"Best HistGradientBoosting CV RMSE: {hist_best_rmse:.4f} ± {hist_std:.4f}")
+    logger.info(f"Training time: {hist_time:.2f} seconds")
+    logger.info("Best HistGradientBoosting Parameters:")
+    for k, v in hist_search.best_params_.items():
+        logger.info(f"  {k}: {v}")
 
     logger.info("--- Tuning Random Forest ---")
     rf_search = RandomizedSearchCV(
-        RandomForestRegressor(random_state=0),
+        RandomForestRegressor(random_state=0, n_jobs=-1),
         rf_param_dist,
         n_iter=n_iter,
         cv=5,
@@ -93,8 +140,9 @@ def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
     start_rf = time.time()
     rf_search.fit(X, y)
     rf_time = time.time() - start_rf
-    rf_best_rmse = -rf_search.best_score_
-    rf_std = np.std(rf_search.cv_results_["mean_test_score"])
+    rf_rmse_folds = _fold_neg_rmse_for_best(rf_search)
+    rf_best_rmse = float(np.mean(rf_rmse_folds))
+    rf_std = float(np.std(rf_rmse_folds))
     logger.info(f"Random Forest RMSE: {rf_best_rmse:.4f}")
     logger.info(f"Best Random Forest CV RMSE: {rf_best_rmse:.4f} ± {rf_std:.4f}")
     logger.info(f"Training time: {rf_time:.2f} seconds")
@@ -102,48 +150,22 @@ def run_model_tuning_with_ttest(X, y, n_iter=10, random_seed=42):
     for k, v in rf_search.best_params_.items():
         logger.info(f"  {k}: {v}")
 
-    logger.info("--- Tuning Gradient Boosting ---")
-    gb_search = RandomizedSearchCV(
-        GradientBoostingRegressor(random_state=0),
-        gb_param_dist,
-        n_iter=n_iter,
-        cv=5,
-        scoring="neg_root_mean_squared_error",
-        random_state=random_seed,
-        n_jobs=-1,
-        verbose=0,
-    )
-    start_gb = time.time()
-    gb_search.fit(X, y)
-    gb_time = time.time() - start_gb
-    gb_best_rmse = -gb_search.best_score_
-    gb_std = np.std(gb_search.cv_results_["mean_test_score"])
-    logger.info(f"Gradient Boosting RMSE: {gb_best_rmse:.4f}")
-    logger.info(f"Best Gradient Boosting CV RMSE: {gb_best_rmse:.4f} ± {gb_std:.4f}")
-    logger.info(f"Training time: {gb_time:.2f} seconds")
-    logger.info("Best Gradient Boosting Parameters:")
-    for k, v in gb_search.best_params_.items():
-        logger.info(f"  {k}: {v}")
-
-    rf_rmse_folds = np.mean([-rf_search.cv_results_[f"split{i}_test_score"] for i in range(5)], axis=0)
-    gb_rmse_folds = np.mean([-gb_search.cv_results_[f"split{i}_test_score"] for i in range(5)], axis=0)
-
-    logger.info("Paired t-test result:")
-    t_stat, p_val = ttest_rel(rf_rmse_folds, gb_rmse_folds)
+    logger.info("Paired t-test result (best finalist, per-fold RMSE):")
+    t_stat, p_val = ttest_rel(hist_rmse_folds, rf_rmse_folds)
     logger.info(f"t-stat = {t_stat:.4f}, p-value = {p_val:.4f}")
     if p_val < 0.05:
         logger.info("The difference is statistically significant.")
     else:
         logger.info("The difference is not statistically significant.")
 
-    return rf_search, gb_search
+    return hist_search, rf_search
 
 
 def run_baseline_evaluation(raw_data, df_attr, num_train):
     logger.info("=== Baseline Evaluation ===")
     baseline_features = ["query_length", "common_words"]
     baseline_model = BaggingRegressor(
-        estimator=RandomForestRegressor(n_estimators=15, max_depth=6, random_state=42, n_jobs=-1),
+        estimator=HistGradientBoostingRegressor(max_depth=6, max_iter=100, random_state=42),
         n_estimators=45,
         random_state=42,
         n_jobs=-1,
@@ -160,7 +182,7 @@ def run_baseline_evaluation(raw_data, df_attr, num_train):
         evaluate_model(baseline_model, X, y, name=f"Baseline ({label})")
 
 
-def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model_params=None):
+def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model_params=None, estimator_cls=GradientBoostingRegressor):
     logger.info("=== Feature Evaluation ===")
     results = []
 
@@ -174,9 +196,14 @@ def run_feature_set_evaluation(raw_data, df_attr, num_train, feature_sets, model
             y = df_train["relevance"]
 
             if model_params is None:
-                model_params = {"n_estimators": 100, "max_depth": 7, "random_state": 42, "n_jobs": -1}
+                if estimator_cls is HistGradientBoostingRegressor:
+                    model_params = {"max_iter": 100, "max_depth": 7, "random_state": 42}
+                elif estimator_cls is RandomForestRegressor:
+                    model_params = {"n_estimators": 100, "max_depth": 7, "random_state": 42, "n_jobs": -1}
+                else:
+                    model_params = {"n_estimators": 100, "max_depth": 7, "random_state": 42}
 
-            base_model = GradientBoostingRegressor(**model_params)
+            base_model = estimator_cls(**model_params)
             model = BaggingRegressor(estimator=base_model, n_estimators=45, random_state=42, n_jobs=-1, max_samples=0.1)
 
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -217,6 +244,7 @@ def run_feature_search(
     num_train,
     feature_sets,
     model_params=None,
+    estimator_cls=GradientBoostingRegressor,
     search_mode="presets",
     sample_size=25,
     random_seed=42,
@@ -228,7 +256,9 @@ def run_feature_search(
         rng = random.Random(random_seed)
         candidate_sets = rng.sample(candidate_sets, sample_size)
 
-    results_df = run_feature_set_evaluation(raw_data, df_attr, num_train, candidate_sets, model_params=model_params)
+    results_df = run_feature_set_evaluation(
+        raw_data, df_attr, num_train, candidate_sets, model_params=model_params, estimator_cls=estimator_cls
+    )
     results_df["Search Mode"] = search_mode
     results_df["Random Seed"] = random_seed
 
@@ -240,7 +270,7 @@ def run_feature_search(
     return results_df.sort_values(by="RMSE (CV)")
 
 
-def evaluate_on_test_set(df_all, df_attr, features, num_train, stem=True, model_params=None):
+def evaluate_on_test_set(df_all, df_attr, features, num_train, stem=True, model_params=None, estimator_cls=GradientBoostingRegressor):
     df_features = build_feature_set(df_all.copy(), df_attr, features, stem=stem)
     df_train = df_features.iloc[:num_train]
     df_test = df_features.iloc[num_train:]
@@ -249,17 +279,38 @@ def evaluate_on_test_set(df_all, df_attr, features, num_train, stem=True, model_
     X_test = df_test.drop(columns=["id", "relevance"], errors="ignore")
 
     if model_params is None:
-        model_params = {"n_estimators": 100, "max_depth": 7, "random_state": 42, "n_jobs": -1}
+        if estimator_cls is HistGradientBoostingRegressor:
+            model_params = {"max_iter": 100, "max_depth": 7, "random_state": 42}
+        elif estimator_cls is RandomForestRegressor:
+            model_params = {"n_estimators": 100, "max_depth": 7, "random_state": 42, "n_jobs": -1}
+        else:
+            model_params = {"n_estimators": 100, "max_depth": 7, "random_state": 42}
 
-    model = RandomForestRegressor(**model_params)
+    model = estimator_cls(**model_params)
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     return pd.DataFrame({"id": df_test["id"].values, "relevance": y_pred})
 
 
-def generate_submission_file(raw_data, df_attr, num_train, best_features, model_params, output_path="submission.csv"):
+def generate_submission_file(
+    raw_data,
+    df_attr,
+    num_train,
+    best_features,
+    model_params,
+    output_path="submission.csv",
+    estimator_cls=GradientBoostingRegressor,
+):
     logger.info("Generating final test predictions with best feature combination...")
-    final_submission = evaluate_on_test_set(raw_data, df_attr, num_train=num_train, features=best_features, stem=True, model_params=model_params)
+    final_submission = evaluate_on_test_set(
+        raw_data,
+        df_attr,
+        num_train=num_train,
+        features=best_features,
+        stem=True,
+        model_params=model_params,
+        estimator_cls=estimator_cls,
+    )
     final_submission["relevance"] = final_submission["relevance"].clip(1.0, 3.0).round(2)
     final_submission.to_csv(output_path, index=False)
     logger.info(f"Saved predictions to {output_path}.")
@@ -407,12 +458,19 @@ def plot_feature_importance(model, X, y, feature_names, top_n=5, plot=True, save
     return importance_df
 
 
-def run_full_feature_importance(raw_data, df_attr, num_train, best_params, save_path="feature_importance_barplot.png"):
+def run_full_feature_importance(
+    raw_data,
+    df_attr,
+    num_train,
+    best_params,
+    save_path="feature_importance_barplot.png",
+    estimator_cls=GradientBoostingRegressor,
+):
     df_full = build_feature_set(raw_data, df_attr, all_features, stem=True)
     X_all = df_full.iloc[:num_train].drop(columns=["id", "relevance"], errors="ignore")
     y_all = df_full.iloc[:num_train]["relevance"]
     return plot_feature_importance(
-        GradientBoostingRegressor(**best_params),
+        estimator_cls(**best_params),
         X_all,
         y_all,
         X_all.columns.tolist(),
@@ -421,7 +479,7 @@ def run_full_feature_importance(raw_data, df_attr, num_train, best_params, save_
     )
 
 
-def benchmark_new_features(raw_data, df_attr, num_train, model_params):
+def benchmark_new_features(raw_data, df_attr, num_train, model_params, estimator_cls=GradientBoostingRegressor):
     """Benchmark domain-specific new features against the original best set."""
     baseline_best = ["query_length", "initial_term_match", "jaccard", "common_words", "color_match", "fuzzy", "bigram_overlap"]
     candidate_sets = [
@@ -430,5 +488,7 @@ def benchmark_new_features(raw_data, df_attr, num_train, model_params):
         baseline_best + ["numeric_unit_consistency"],
         baseline_best + ["query_category_match"],
     ]
-    return run_feature_set_evaluation(raw_data, df_attr, num_train, candidate_sets, model_params=model_params)
+    return run_feature_set_evaluation(
+        raw_data, df_attr, num_train, candidate_sets, model_params=model_params, estimator_cls=estimator_cls
+    )
 

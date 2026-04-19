@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from loguru import logger
+from tqdm import tqdm
+
+
+def _tqdm_console_sink(message) -> None:
+    # Route console logs through tqdm so progress bars and log lines do not clobber each other.
+    tqdm.write(str(message), end="")
 
 
 def configure_logging(output_dir: str, run_id: str, level: str = "INFO") -> str:
@@ -16,9 +21,9 @@ def configure_logging(output_dir: str, run_id: str, level: str = "INFO") -> str:
 
     logger.remove()
     logger.add(
-        sys.stderr,
+        _tqdm_console_sink,
         level=level,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}\n",
     )
     logger.add(
         str(log_file_path),
