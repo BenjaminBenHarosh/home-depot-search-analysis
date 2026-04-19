@@ -101,42 +101,6 @@ all_features = [
     "query_category_match",
 ]
 
-feature_sets = [
-    ["tfidf_similarity"],
-    ["initial_term_match"],
-    ["query_length"],
-    ["jaccard"],
-    ["fuzzy"],
-    ["query_has_number"],
-    ["bigram_overlap"],
-    ["color_match"],
-    ["brand_match"],
-    ["common_words"],
-    ["unit_match"],
-    ["material_match"],
-]
-feature_sets += [["query_length", "common_words"]]
-feature_sets += [
-    ["query_length", "common_words", "initial_term_match"],
-    ["tfidf_similarity", "query_length", "common_words"],
-    ["tfidf_similarity", "query_length", "initial_term_match"],
-]
-feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "common_words"]]
-feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "common_words", "fuzzy"]]
-feature_sets += [
-    ["tfidf_similarity", "query_length", "jaccard", "query_has_number", "common_words", "color_match"],
-    ["tfidf_similarity", "query_length", "initial_term_match", "common_words", "fuzzy", "jaccard"],
-]
-feature_sets += [
-    ["query_length", "initial_term_match", "jaccard", "common_words", "color_match", "fuzzy", "bigram_overlap"],
-    ["tfidf_similarity", "query_length", "initial_term_match", "common_words", "fuzzy", "jaccard", "query_has_number"],
-]
-feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuzzy", "jaccard", "common_words", "query_has_number", "bigram_overlap"]]
-feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuzzy", "jaccard", "common_words", "query_has_number", "color_match", "unit_match"]]
-feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuzzy", "jaccard", "common_words", "query_has_number", "color_match", "material_match", "brand_match"]]
-feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuzzy", "jaccard", "common_words", "query_has_number", "color_match", "material_match", "brand_match", "unit_match"]]
-feature_sets += [["tfidf_similarity", "query_length", "initial_term_match", "fuzzy", "jaccard", "common_words", "query_has_number", "color_match", "material_match", "brand_match", "unit_match", "bigram_overlap"]]
-
 CATEGORY_KEYWORDS = {
     "paint": {"paint", "primer", "stain"},
     "power_tools": {"drill", "saw", "sander", "router"},
@@ -364,6 +328,34 @@ def load_feature_sets_from_yaml(config_path):
         validate_feature_list(feature_list)
         loaded_sets.append(feature_list)
     return loaded_sets
+
+
+def build_default_feature_sets(config_path: str = "configs/features.yaml") -> list[list[str]]:
+    """Build the default feature search preset list.
+
+    Step 1 — auto-generate all single-feature sets from ``all_features``.
+              These update automatically when ``all_features`` is extended,
+              so new features appear as baselines with no manual bookkeeping.
+    Step 2 — load all multi-feature curated sets from the YAML config.
+              Editing the search space only requires a YAML change, not a
+              Python source edit.
+    The two sources are combined and deduplicated (order preserved).
+    """
+    singles = [[f] for f in all_features]
+    try:
+        multi = load_feature_sets_from_yaml(config_path)
+    except (FileNotFoundError, ValueError):
+        multi = []
+    seen: set[tuple[str, ...]] = {tuple(s) for s in singles}
+    for combo in multi:
+        key = tuple(combo)
+        if key not in seen:
+            singles.append(combo)
+            seen.add(key)
+    return singles
+
+
+feature_sets = build_default_feature_sets()
 
 
 def build_feature_set(df_raw, df_attr, features_to_include, stem=True, num_train=None):

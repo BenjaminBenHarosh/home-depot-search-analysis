@@ -1,13 +1,119 @@
 feature_sets:
+  # ── 2-feature sets ──────────────────────────────────────────────────────────
   baseline:
     - query_length
     - common_words
+
+  # ── 3-feature sets ──────────────────────────────────────────────────────────
+  core_3:
+    - query_length
+    - common_words
+    - initial_term_match
+
+  tfidf_3a:
+    - tfidf_similarity
+    - query_length
+    - common_words
+
+  tfidf_3b:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+
+  # ── 4-feature sets ──────────────────────────────────────────────────────────
+  tfidf_4:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - common_words
+
+  # ── 5-feature sets ──────────────────────────────────────────────────────────
+  tfidf_5:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - common_words
+    - fuzzy
+
+  # ── 6-feature sets ──────────────────────────────────────────────────────────
+  tfidf_6a:
+    - tfidf_similarity
+    - query_length
+    - jaccard
+    - query_has_number
+    - common_words
+    - color_match
+
+  tfidf_6b:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - common_words
+    - fuzzy
+    - jaccard
+
   core_semantic:
     - tfidf_similarity
     - initial_term_match
     - jaccard
     - fuzzy
     - bigram_overlap
+
+  # ── 7-feature sets ──────────────────────────────────────────────────────────
+  no_tfidf_7:
+    - query_length
+    - initial_term_match
+    - jaccard
+    - common_words
+    - color_match
+    - fuzzy
+    - bigram_overlap
+
+  tfidf_7:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - common_words
+    - fuzzy
+    - jaccard
+    - query_has_number
+
+  # ── 8-feature sets ──────────────────────────────────────────────────────────
+  tfidf_8:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - fuzzy
+    - jaccard
+    - common_words
+    - query_has_number
+    - bigram_overlap
+
+  # ── 9-feature sets ──────────────────────────────────────────────────────────
+  tfidf_9:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - fuzzy
+    - jaccard
+    - common_words
+    - query_has_number
+    - color_match
+    - unit_match
+
+  # ── 10-feature sets ─────────────────────────────────────────────────────────
+  tfidf_10:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - fuzzy
+    - jaccard
+    - common_words
+    - query_has_number
+    - color_match
+    - material_match
+    - brand_match
+
   domain_boosted:
     - tfidf_similarity
     - initial_term_match
@@ -16,3 +122,60 @@ feature_sets:
     - unit_match
     - numeric_unit_consistency
     - edit_distance
+
+  # ── 11-feature sets ─────────────────────────────────────────────────────────
+  tfidf_11:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - fuzzy
+    - jaccard
+    - common_words
+    - query_has_number
+    - color_match
+    - material_match
+    - brand_match
+    - unit_match
+
+  # ── 12-feature sets ─────────────────────────────────────────────────────────
+  tfidf_12:
+    - tfidf_similarity
+    - query_length
+    - initial_term_match
+    - fuzzy
+    - jaccard
+    - common_words
+    - query_has_number
+    - color_match
+    - material_match
+    - brand_match
+    - unit_match
+    - bigram_overlap
+
+  # ── Phase 2 presets (enabled after Phase 2 features are implemented) ────────
+  # Uncomment these after running Phase 2:
+  #
+  # lsa_core:
+  #   - lsa_similarity
+  #   - initial_term_match
+  #   - jaccard
+  #   - common_words
+  #
+  # best_plus_lsa:
+  #   - lsa_similarity
+  #   - query_length
+  #   - initial_term_match
+  #   - jaccard
+  #   - common_words
+  #   - color_match
+  #   - fuzzy
+  #   - bigram_overlap
+  #
+  # semantic_full:
+  #   - tfidf_split
+  #   - lsa_similarity
+  #   - bm25_similarity
+  #   - initial_term_match
+  #   - jaccard
+  #   - common_words
+  #   - query_mean_relevance
